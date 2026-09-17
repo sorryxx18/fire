@@ -31,6 +31,20 @@ class ReportRecord:
 
 
 @dataclass
+class InspectionDetailData:
+    place_no: str = ""
+    place_name: str = ""
+    address: str = ""
+    inspection_time: Optional[datetime] = None
+    inspection_unit: str = ""
+    fire_management_result: str = ""
+    equipment_result: str = ""
+    violation_found: Optional[bool] = None
+    remarks: str = ""
+    raw_text: str = ""
+
+
+@dataclass
 class PlaceData:
     place_no: str = ""
     company_name: str = ""
@@ -76,6 +90,16 @@ def _parse_date(value: str) -> Optional[datetime]:
     if not m:
         return None
     return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+def _parse_datetime(value: str) -> Optional[datetime]:
+    value = value.strip()
+    for fmt in ("%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    return None
 
 
 def extract_pdf_text(pdf_path: str | Path) -> str:
@@ -225,9 +249,7 @@ def parse_place_record_pdf(pdf_path: str | Path) -> PlaceData:
 
     manager_line = _first_match(r"管理權人\s*\n([^\n]+)", text)
     fire_manager_line = _first_match(r"防火管理人\s*\n([^\n]+)", text)
-    fire_manager_date_text = _first_match(
-        r"任用日期\s*:\s*(20\d{2}/\d{1,2}/\d{1,2})", fire_manager_line
-    )
+    fire_manager_date_text = _first_match(r"任用日期\s*:\s*(20\d{2}/\d{1,2}/\d{1,2})", fire_manager_line)
 
     data = PlaceData(
         place_no=_first_match(r"場所編號\s*:\s*(\d+)", text),
@@ -265,3 +287,116 @@ def parse_place_record_pdf(pdf_path: str | Path) -> PlaceData:
     if not data.address:
         raise ValueError("無法從 PDF 讀取場所地址。")
     return data
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"\s+", "", text or "")
+
+
+def _slice_compact(compact: str, start_key: str, end_key: str) -> str:
+    start = compact.find(start_key)
+    if start < 0:
+        return ""
+    end = compact.find(end_key, start + len(start_key))
+    if end < 0:
+        end = len(compact)
+    return compact[start:end]
+
+
+def parse_inspection_record_pdf(pdf_path: str | Path) -> InspectionDetailData:
+    """Parse the one-page 臺北市政府消防局消防安全檢查紀錄表.
+
+    The detailed form is used as a second source.  Only deterministic header and
+    checkbox signals are interpreted; ambiguous unchecked equipment rows are not
+    guessed.
+    """
+    text = extract_pdf_text(pdf_path)
+    compact = _compact(text)
+    if "消防安全檢查紀錄表" not in compact:
+        raise ValueError("PDF 格式不符：未找到「消防安全檢查紀錄表」標題。")
+
+    inspection_time_text = _first_match(
+        r"檢查時間\s*(20\d{2}/\d{1,2}/\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)",
+        text,
+    )
+    place_name = _first_match(r"場所名稱\s+(.+?)\s+用途\s+", text)
+    address = _first_match(r"場所地址\s+(.+?)\s+管理權人\s+", text)
+    unit = _first_match(r"檢查單位\s+([^\s]+)", text)
+
+    fire_block = _slice_compact(compact, "防火管理", "檢修申報")
+    fire_result = ""
+    if "■不符合" in fire_block:
+        fire_result = "不合格"
+    elif "■符合" in fire_block:
+        fire_result = "合格"
+
+    equipment_block = _slice_compact(compact, "滅火器", "違規查報")
+    equipment_result = ""
+    if "■不符合" in equipment_block:
+        equipment_result = "不合格"
+    elif "■符合" in equipment_block:
+        equipment_result = "合格"
+
+    violation_block = _slice_compact(compact, "違規查報", "備註")
+    violation_found: Optional[bool] = None
+    if "■有發現" in violation_block:
+        violation_found = True
+    elif "■未發現" in violation_block:
+        violation_found = False
+
+    remarks_block = _slice_compact(compact, "備註", "簽名")
+    remarks = remarks_block.removeprefix("備註")
+
+    data = InspectionDetailData(
+        place_no=_first_match(r"場所編號\s*[:：]?\s*(\d+)", text),
+        place_name=place_name,
+        address=address,
+        inspection_time=_parse_datetime(inspection_time_text) if inspection_time_text else None,
+        inspection_unit=unit,
+        fire_management_result=fire_result,
+        equipment_result=equipment_result,
+        violation_found=violation_found,
+        remarks=remarks,
+        raw_text=text,
+    )
+    if not data.place_no and not data.place_name and not data.address:
+        raise ValueError("消防安全檢查紀錄表無法讀取場所識別資料。")
+    return data
+
+
+def _norm_identity(value: str) -> str:
+    return re.sub(r"[\s()（）\-－]", "", value or "").lower()
+
+
+def merge_inspection_detail(place: PlaceData, detail: InspectionDetailData) -> PlaceData:
+    """Validate that both PDFs are the same place and merge confident results."""
+    if place.place_no and detail.place_no and place.place_no != detail.place_no:
+        raise ValueError(
+            f"兩份 PDF 的場所編號不同：場所紀錄表={place.place_no}，檢查紀錄表={detail.place_no}。"
+        )
+    if place.address and detail.address:
+        a = _norm_identity(place.address)
+        b = _norm_identity(detail.address)
+        if a and b and a != b and a not in b and b not in a:
+            raise ValueError("兩份 PDF 的場所地址不同，請確認檢查紀錄是否選對場所。")
+
+    if detail.inspection_time and detail.fire_management_result:
+        current = place.latest_fire_management_inspection
+        if current is None or detail.inspection_time >= current.date:
+            place.latest_fire_management_inspection = InspectionRecord(
+                date=detail.inspection_time,
+                category="防火管理",
+                result=detail.fire_management_result,
+                raw=detail.raw_text,
+            )
+
+    if detail.inspection_time and detail.equipment_result:
+        current = place.latest_equipment_inspection
+        if current is None or detail.inspection_time >= current.date:
+            place.latest_equipment_inspection = InspectionRecord(
+                date=detail.inspection_time,
+                category="消防設備",
+                result=detail.equipment_result,
+                raw=detail.raw_text,
+            )
+    return place
