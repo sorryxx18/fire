@@ -4,7 +4,7 @@ import ctypes
 import time
 from pathlib import Path
 
-from pywinauto import Desktop, keyboard, mouse
+from pywinauto import keyboard, mouse
 
 from ankuan_automation import AnKuanAutomation, AnKuanError, PlaceCandidate, _class_name, _control_type, _friendly_class, _rect, _safe_text
 from ankuan_config import config_path, load_config
@@ -49,21 +49,25 @@ def get_cursor_position() -> tuple[int, int]:
 
 def _send_unicode_text(text: str):
     user32 = ctypes.windll.user32
+    user32.SendInput.argtypes = [ctypes.c_uint, ctypes.POINTER(INPUT), ctypes.c_int]
+    user32.SendInput.restype = ctypes.c_uint
     units = text.encode("utf-16-le")
     for i in range(0, len(units), 2):
         code_unit = int.from_bytes(units[i : i + 2], "little")
         down = INPUT(INPUT_KEYBOARD, INPUT_UNION(ki=KEYBDINPUT(0, code_unit, KEYEVENTF_UNICODE, 0, None)))
         up = INPUT(INPUT_KEYBOARD, INPUT_UNION(ki=KEYBDINPUT(0, code_unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, None)))
         arr = (INPUT * 2)(down, up)
-        sent = user32.SendInput(2, ctypes.byref(arr), ctypes.sizeof(INPUT))
+        sent = user32.SendInput(2, arr, ctypes.sizeof(INPUT))
         if sent != 2:
             raise OSError("Windows 無法送出文字輸入。")
 
 
 def _window_text_from_point(x: int, y: int) -> str | None:
     user32 = ctypes.windll.user32
-    pt = POINT(x, y)
-    hwnd = user32.WindowFromPoint(pt)
+    user32.WindowFromPoint.argtypes = [POINT]
+    user32.WindowFromPoint.restype = ctypes.c_void_p
+    user32.SendMessageW.restype = ctypes.c_ssize_t
+    hwnd = user32.WindowFromPoint(POINT(x, y))
     if not hwnd:
         return None
     length = user32.SendMessageW(hwnd, WM_GETTEXTLENGTH, 0, 0)
@@ -77,6 +81,7 @@ def _window_text_from_point(x: int, y: int) -> str | None:
 def _clipboard_text() -> str | None:
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
+    kernel32.GlobalLock.restype = ctypes.c_void_p
     if not user32.OpenClipboard(None):
         return None
     try:
@@ -97,27 +102,20 @@ def _clipboard_text() -> str | None:
 
 
 def _clipboard_echo() -> str | None:
-    previous = _clipboard_text()
-    try:
-        keyboard.send_keys("^a^c", pause=0.03)
-        time.sleep(0.12)
-        value = _clipboard_text()
-        keyboard.send_keys("{RIGHT}", pause=0.02)
-        return value
-    finally:
-        # We intentionally do not overwrite a non-text clipboard.  If there was
-        # text before, leaving the copied field value is less destructive than
-        # blindly clearing other clipboard formats.
-        _ = previous
+    keyboard.send_keys("^a^c", pause=0.03)
+    time.sleep(0.12)
+    value = _clipboard_text()
+    keyboard.send_keys("{RIGHT}", pause=0.02)
+    return value
 
 
 class CalibratedAnKuanAutomation(AnKuanAutomation):
     """AnKuan automation with user-calibrated relative points.
 
-    Calibration points are stored outside the EXE in ankuan_config.json.  They
+    Calibration points are stored outside the EXE in ankuan_config.json. They
     are relative to the AnKuan window, so moving the window does not invalidate
-    them.  Native/UIA controls are still preferred where reliable; calibrated
-    points are used for legacy controls that Windows cannot expose correctly.
+    them. The place-name query field is intentionally calibration-only because
+    the legacy client previously exposed misleading Win32/UIA edit controls.
     """
 
     def __init__(self):
@@ -171,19 +169,21 @@ class CalibratedAnKuanAutomation(AnKuanAutomation):
 
         require_echo = bool(self.config.get("validation", {}).get("require_input_echo", True))
         direct = _window_text_from_point(*pt)
-        if direct is not None:
-            if direct.strip() == value:
-                return True
-            if require_echo:
-                raise AnKuanError(f"已嘗試輸入「{value}」，但安管欄位讀回為「{direct}」，已停止查詢。")
+        if direct is not None and direct.strip() == value:
+            return True
 
         copied = _clipboard_echo()
         if copied is not None and copied.strip() == value:
             return True
+
         if require_echo:
+            direct_text = "無法讀取" if direct is None else direct
+            copied_text = "無法讀取" if copied is None else copied
             raise AnKuanError(
-                f"已嘗試輸入「{value}」，但無法從安管欄位讀回相同文字。"
-                "為避免空白條件誤查，程式已停止。可重新校正該欄位。"
+                f"已嘗試輸入「{value}」，但安管欄位未通過讀回驗證。"
+                f"\n視窗文字：{direct_text}"
+                f"\n複製讀回：{copied_text}"
+                "\n為避免空白條件誤查，程式已停止。請重新校正該欄位。"
             )
         return True
 
@@ -210,16 +210,14 @@ class CalibratedAnKuanAutomation(AnKuanAutomation):
         self._open_condition_tab()
         self._clear_query_fields()
 
-        if not self._set_calibrated_text("place_name", query):
-            edit = self._nearest_edit_to_label("場所名稱") or self._legacy_place_name_edit()
-            if not edit:
-                raise AnKuanError(
-                    "無法安全辨識「場所名稱」輸入框。請先到「校正／設定」完成場所名稱欄位校正。"
-                )
-            self._set_edit(edit, query)
-            time.sleep(self._timing("after_input", 0.5))
-
+        if not self._point("place_name"):
+            raise AnKuanError(
+                "尚未校正「場所名稱欄位」。為避免再次以空白條件誤查，"
+                "請先到「校正／設定」完成場所名稱欄位校正。"
+            )
+        self._set_calibrated_text("place_name", query)
         self._click_query()
+
         candidates = self._filter_candidates(self._read_result_candidates(), query)
         if not candidates:
             candidates = self._export_result_csv_candidates(query)
@@ -251,15 +249,16 @@ class CalibratedAnKuanAutomation(AnKuanAutomation):
         return super()._export_result_csv_candidates(query)
 
     def _select_exact_place_no(self, candidate: PlaceCandidate) -> bool:
+        # Do not reuse the old heuristic for this field. If it is not calibrated,
+        # select_place() may still use a real row wrapper or safe navigation.
         if not self._point("place_no"):
-            return super()._select_exact_place_no(candidate)
+            return False
         try:
             self.open_place_search()
             self.reload_config()
             self._open_condition_tab()
             self._clear_query_fields()
-            if not self._set_calibrated_text("place_no", candidate.place_no):
-                return False
+            self._set_calibrated_text("place_no", candidate.place_no)
             self._click_query()
             first = self._find_any_text(["首筆"], ("Button", "Text"))
             if first:
@@ -292,9 +291,7 @@ class CalibratedAnKuanAutomation(AnKuanAutomation):
             self._click(confirm)
         pdf = self._wait_new_file(".pdf", before, timeout=timeout)
         if not pdf:
-            raise AnKuanError(
-                "已送出「場所紀錄表」產出，但未偵測到新 PDF。安管可能先開啟預覽視窗。"
-            )
+            raise AnKuanError("已送出「場所紀錄表」產出，但未偵測到新 PDF。安管可能先開啟預覽視窗。")
         return pdf
 
     def export_diagnostics(self, path: Path) -> Path:
