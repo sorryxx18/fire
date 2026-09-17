@@ -2,21 +2,19 @@ from __future__ import annotations
 
 import re
 import sys
-from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
 from docx import Document
+from docx.oxml.ns import qn
 from docx.shared import RGBColor
 
 from parser import PlaceData
 
-
-PENDING_MARK = "【待補】"
+PENDING_RE = re.compile(r"(【待補：[^】]+】)")
 
 
 def resource_path(relative: str) -> Path:
-    """支援一般執行與 PyInstaller --onefile。"""
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return base / relative
 
@@ -31,70 +29,57 @@ def roc_date(dt: datetime) -> str:
 
 def _result_phrase(result: str) -> str:
     if result in ("合格", "符合"):
-        return "符合規定"
+        return "合格"
     if result in ("不合格", "不符合"):
-        return "不符合規定"
+        return "不合格"
     return result
 
 
-def _set_cell_text_preserve_format(cell, text: str):
-    """只換文字，不改表格、段落與第一個 run 的格式。"""
+def _format_area(value: str) -> str:
+    try:
+        return f"{float(value.replace(',', '')):,.0f}"
+    except Exception:
+        return value
+
+
+def _write_cell(cell, text: str):
     if not cell.paragraphs:
         p = cell.add_paragraph()
     else:
         p = cell.paragraphs[0]
+    for run in p.runs:
+        run.text = ""
 
-    if p.runs:
-        p.runs[0].text = text
-        for run in p.runs[1:]:
-            run.text = ""
-    else:
-        p.add_run(text)
-
-    # 清掉多餘段落內的文字，但不移除段落，避免碰版面結構。
-    for extra_p in cell.paragraphs[1:]:
-        for run in extra_p.runs:
-            run.text = ""
-
-
-def _mark_cell_pending(cell):
-    """在尚未填入資料的執行情形前加上紅色【待補】，原制式預留文字保留。"""
-    original = cell.text.strip()
-    if not original or original.startswith(PENDING_MARK):
-        return
-
-    if not cell.paragraphs:
-        p = cell.add_paragraph()
-    else:
-        p = cell.paragraphs[0]
-
-    if p.runs:
-        base_run = p.runs[0]
-        base_rpr = deepcopy(base_run._r.rPr) if base_run._r.rPr is not None else None
-        for run in p.runs:
-            run.text = ""
-    else:
-        base_run = p.add_run()
-        base_rpr = None
-
-    base_run.text = PENDING_MARK
-    base_run.bold = True
-    base_run.font.color.rgb = RGBColor(255, 0, 0)
-
-    normal = p.add_run(original)
-    if base_rpr is not None:
-        if normal._r.rPr is not None:
-            normal._r.remove(normal._r.rPr)
-        normal._r.insert(0, deepcopy(base_rpr))
+    for part in PENDING_RE.split(text):
+        if not part:
+            continue
+        run = p.add_run(part)
+        run.font.name = "標楷體"
+        run._element.rPr.rFonts.set(qn("w:eastAsia"), "標楷體")
+        if part.startswith("【待補："):
+            run.bold = True
+            run.font.color.rgb = RGBColor(192, 0, 0)
 
     for extra_p in cell.paragraphs[1:]:
         for run in extra_p.runs:
             run.text = ""
 
 
-def _sanitize_filename(name: str) -> str:
-    name = re.sub(r'[\\/:*?"<>|]', "_", name).strip().rstrip(".")
-    return name[:80] or "場所"
+def _equipment_summary(items: list[str]) -> str:
+    preferred = [
+        "滅火器",
+        "室內消防栓設備",
+        "自動撒水設備",
+        "火警自動警報設備",
+        "緊急廣播設備",
+        "出口標示燈",
+        "避難方向指示燈",
+        "緊急照明設備",
+        "連結送水管",
+        "室內排煙設備",
+    ]
+    found = [item for item in preferred if item in items]
+    return "、".join(found) + ("等設備" if found else "")
 
 
 def build_prefill_text(data: PlaceData) -> dict[str, str]:
@@ -105,38 +90,73 @@ def build_prefill_text(data: PlaceData) -> dict[str, str]:
     if data.address:
         fields["場所地址"] = data.address
 
+    if data.purpose or data.business_floors:
+        fields["用途及營業樓層"] = (
+            f"用途為{data.purpose or '【待補：用途】'}；"
+            f"營業樓層{data.business_floors or '【待補：樓層】'}。"
+        )
+
+    building_bits: list[str] = []
+    if data.above_ground_floors and data.below_ground_floors:
+        building_bits.append(f"地上{data.above_ground_floors}層、地下{data.below_ground_floors}層")
+    if data.building_height:
+        building_bits.append(f"高度{data.building_height}公尺")
+    if data.total_floor_area:
+        building_bits.append(f"總樓地板面積{_format_area(data.total_floor_area)}㎡")
+    if data.use_permit_no:
+        building_bits.append(f"使用執照{data.use_permit_no}")
+    if building_bits:
+        fields["建築物規模"] = "；".join(building_bits) + "。"
+
+    if data.manager_name:
+        text = data.manager_name
+        if data.manager_representative:
+            text += f"，代表人{data.manager_representative}"
+        fields["管理權人"] = text + "。"
+
+    if data.fire_manager_name:
+        text = data.fire_manager_name
+        if data.fire_manager_title:
+            text += f"，職稱{data.fire_manager_title}"
+        if data.fire_manager_appointment_date:
+            text += f"，於{roc_date(data.fire_manager_appointment_date)}任用"
+        fields["防火管理人"] = text + "。"
+
+    if data.equipment_items:
+        summary = _equipment_summary(data.equipment_items)
+        if summary:
+            fields["主要消防安全設備"] = f"設有{summary}。"
+
     if data.latest_equipment_inspection:
-        r = data.latest_equipment_inspection
-        fields["消防安全設備"] = (
-            f"最近一次於{roc_date(r.date)}實施消防安全檢查，"
-            f"檢查結果{_result_phrase(r.result)}。"
+        record = data.latest_equipment_inspection
+        fields["最近消防設備檢查"] = (
+            f"最近一次於{roc_date(record.date)}辦理消防設備檢查，"
+            f"結果{_result_phrase(record.result)}。"
         )
 
     if data.latest_equipment_report:
-        r = data.latest_equipment_report
-        report_year = roc_year(r.year)
-        fields["消防安全設備檢修申報"] = (
-            f"最近一次於{roc_date(r.received_date)}辦理"
-            f"{report_year}年{r.period}消防安全設備檢修申報。"
+        record = data.latest_equipment_report
+        fields["最近檢修申報"] = (
+            f"最近一次於{roc_date(record.received_date)}辦理"
+            f"{roc_year(record.year)}年{record.period}消防安全設備檢修申報，"
+            f"結果{_result_phrase(record.result)}。"
         )
 
     if data.fire_plan_date:
-        text = f"消防防護計畫書製定（變更）日期為{roc_date(data.fire_plan_date)}"
-        if data.training_date:
-            if data.training_year:
-                year = roc_year(data.training_year)
-                period = data.training_period or ""
-                text += f"；另{year}年{period}自衛消防編組訓練於{roc_date(data.training_date)}辦理"
-            else:
-                text += f"；另自衛消防編組訓練於{roc_date(data.training_date)}辦理"
-        fields["防火管理"] = text + "。"
+        fields["消防防護計畫"] = f"消防防護計畫於{roc_date(data.fire_plan_date)}制定（變更）。"
+
+    if data.latest_fire_management_inspection:
+        record = data.latest_fire_management_inspection
+        fields["最近防火管理檢查"] = (
+            f"最近一次於{roc_date(record.date)}辦理防火管理檢查，"
+            f"結果{_result_phrase(record.result)}。"
+        )
+
+    if data.training_date:
+        fields["自衛消防編組訓練"] = f"最近一次於{roc_date(data.training_date)}辦理自衛消防編組訓練。"
 
     if data.flame_retardant_text:
-        content = data.flame_retardant_text.rstrip("。")
-        fields["防焰物品"] = (
-            "依法應使用防焰物品之區域，其窗簾、布幕、地毯等防焰物品情形："
-            f"{content}。"
-        )
+        fields["防焰物品"] = data.flame_retardant_text.rstrip("。") + "。"
 
     return fields
 
@@ -153,31 +173,36 @@ def fill_word_template(
     if not doc.tables:
         raise ValueError("Word 樣板內找不到表格。")
     table = doc.tables[0]
-
     fields = build_prefill_text(data)
     updated: list[str] = []
 
-    # 不依列號猜欄位：直接找第二欄固定「項目」名稱，再只改第三欄。
     for row in table.rows:
         cells = row.cells
-        if len(cells) < 3:
+        if len(cells) < 2:
             continue
-        item = cells[1].text.strip()
+        item = cells[0].text.strip()
         if not item or item == "項目" or item.startswith(("一、", "二、", "三、", "四、")):
             continue
 
         if item in fields:
-            _set_cell_text_preserve_format(cells[2], fields[item])
+            _write_cell(cells[1], fields[item])
             updated.append(item)
         else:
-            _mark_cell_pending(cells[2])
+            _write_cell(cells[1], cells[1].text.strip())
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(output_path)
     return output_path, updated
 
 
+def _sanitize_filename(name: str) -> str:
+    name = re.sub(r'[\\/:*?"<>|]', "_", name).strip().rstrip(".")
+    return name[:80] or "場所"
+
+
 def default_output_path(pdf_path: str | Path, data: PlaceData) -> Path:
     pdf_path = Path(pdf_path)
     stem = _sanitize_filename(data.sign_name or data.company_name or data.raw_place_name)
-    return pdf_path.with_name(f"{stem}_施工中場所火災_消防安全管理及應變執行情形表.docx")
+    today = datetime.now()
+    date_part = f"{roc_year(today.year)}{today.month:02d}{today.day:02d}"
+    return pdf_path.with_name(f"{stem}_消防安全管理及應變執行情形表_{date_part}.docx")
