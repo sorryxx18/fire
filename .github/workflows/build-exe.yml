@@ -21,6 +21,9 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Syntax check
+        run: python -m py_compile app.py ankuan_automation.py ankuan_config.py ankuan_runtime.py parser.py word_writer.py template_builder.py
+
       - name: Build Word template
         run: python template_builder.py
 
@@ -57,7 +60,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.2.2
+          TAG: v0.3.0
         run: |
           $main = "dist/消防安全表自動產製工具.exe"
           $releaseMain = "dist/fire_tool.exe"
@@ -68,5 +71,5 @@ jobs:
             gh release upload $env:TAG $releaseMain --clobber
             gh release upload $env:TAG $probe --clobber
           } else {
-            gh release create $env:TAG $releaseMain $probe --title "消防安全表自動產製工具 v0.2.2" --notes "舊式安管查詢結果表格若無法由 Windows UI Automation 讀取，改用安管畫面既有的『存檔(CSV)』功能讀取場所清單並在 APP 內做模糊篩選；選定場所後優先以場所編號精確查詢，不使用 OCR 或固定螢幕座標。"
+            gh release create $env:TAG $releaseMain $probe --title "消防安全表自動產製工具 v0.3.0" --notes "新增外部 ankuan_config.json 與校正／設定頁：場所名稱、場所編號、查詢、CSV、安全查察、場所紀錄表等控制點可依安管視窗做相對位置校正，不需每次重新打包 EXE。場所名稱查詢改為必須先校正並完成輸入讀回驗證，避免空白條件誤查；另可匯出遮蔽資料內容的控制項診斷 TXT。"
           }
