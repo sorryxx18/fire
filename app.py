@@ -46,6 +46,10 @@ CALIBRATION_ITEMS = [
     ("inspection_record_button", "檢查紀錄表按鈕", "ankuan"),
     ("preview_pdf_button", "預覽 PDF 匯出按鈕", "preview"),
     ("preview_close_button", "預覽結束按鈕", "preview"),
+    # 選用：查詢結果清單範圍，只用於OCR候選建議（result_ocr.py）。
+    # 沒校正這兩點時，OCR功能自動略過，維持原本純人工選擇流程。
+    ("result_grid_top_left", "查詢結果清單－左上角", "ankuan"),
+    ("result_grid_bottom_right", "查詢結果清單－右下角", "ankuan"),
 ]
 
 REQUIRED_BASE_POINTS = [
@@ -254,6 +258,7 @@ class App(tk.Tk):
 
         self.pending_query = query
         self.place_continue_btn.configure(state="normal")
+        self._offer_ocr_candidates(query)
         self.guide_var.set(
             f"已將「{query}」送至安管查詢。\n\n"
             "現在請在安管結果中人工選擇正確場所並進入場所資料。\n"
@@ -261,6 +266,76 @@ class App(tk.Tk):
             "本工具不讀取舊式結果表格，也不會使用『存檔(CSV)』。"
         )
         self.status_var.set(f"查詢「{query}」已送出；請在安管人工選擇場所。")
+
+    def _offer_ocr_candidates(self, query: str) -> None:
+        """Best-effort OCR suggestion for the query result row.
+
+        This never clicks anything without an explicit human confirmation,
+        and any failure here (uncalibrated grid, OCR engine unavailable,
+        zero/ambiguous matches) silently falls back to the existing
+        pure-manual flow described in the guide text below.
+        """
+        try:
+            from result_ocr import find_result_candidates
+            candidates = find_result_candidates(self.automation, query)
+        except Exception:
+            candidates = None
+        if not candidates:
+            return
+
+        if len(candidates) == 1:
+            c = candidates[0]
+            if messagebox.askyesno(
+                "OCR辨識到可能符合的場所",
+                f"在查詢結果清單中辨識到這一列：\n\n{c.text}\n\n"
+                "這是你要選的場所嗎？按『是』會直接幫你點這一列；"
+                "按『否』請自行在安管手動選擇（不會有任何動作）。\n\n"
+                "OCR辨識可能有誤，請務必核對內容後再確認。",
+            ):
+                self.automation.click_absolute(c.x, c.y)
+                self.status_var.set("已依OCR辨識結果點擊該列，請確認安管已進入正確場所資料。")
+            return
+
+        choice = self._choose_ocr_candidate(candidates)
+        if choice is not None:
+            self.automation.click_absolute(choice.x, choice.y)
+            self.status_var.set("已依你選擇的候選列點擊，請確認安管已進入正確場所資料。")
+
+    def _choose_ocr_candidate(self, candidates):
+        """Modal list-picker for multiple OCR candidates. Returns the chosen
+        candidate, or None if the user cancelled without picking one."""
+        win = tk.Toplevel(self)
+        win.title("OCR辨識到多筆可能符合的場所")
+        win.transient(self)
+        win.grab_set()
+        ttk.Label(
+            win,
+            text="查詢結果清單中辨識到下列多筆可能符合的場所，請選擇正確的一筆：",
+            wraplength=440,
+            padding=8,
+        ).pack(fill="x")
+        listbox = tk.Listbox(win, width=70, height=min(10, len(candidates)))
+        for c in candidates:
+            listbox.insert("end", c.text)
+        listbox.pack(fill="both", expand=True, padx=8)
+
+        result: list = [None]
+
+        def confirm():
+            sel = listbox.curselection()
+            if sel:
+                result[0] = candidates[sel[0]]
+            win.destroy()
+
+        def cancel():
+            win.destroy()
+
+        btns = ttk.Frame(win, padding=8)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="取消（自行手動選擇）", command=cancel).pack(side="left")
+        ttk.Button(btns, text="確認選這筆並點擊", command=confirm).pack(side="right")
+        win.wait_window()
+        return result[0]
 
     def continue_selected_place(self):
         if not self.automation or not self.pending_query:

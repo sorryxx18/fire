@@ -22,7 +22,7 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Syntax check
-        run: python -m py_compile app.py ankuan_automation.py ankuan_config.py ankuan_runtime.py ankuan_manual_flow.py parser.py word_writer.py template_builder.py
+        run: python -m py_compile app.py ankuan_automation.py ankuan_config.py ankuan_runtime.py ankuan_manual_flow.py parser.py word_writer.py template_builder.py result_ocr.py
 
       - name: Validate Win32 INPUT structure
         shell: pwsh
@@ -44,6 +44,8 @@ jobs:
           --name "消防安全表自動產製工具"
           --add-data "resources\template.docx;resources"
           --collect-all pywinauto
+          --collect-all winocr
+          --collect-all winrt
           app.py
 
       - name: Build AnKuan UI probe EXE

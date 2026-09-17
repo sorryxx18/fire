@@ -289,6 +289,13 @@ class CalibratedAnKuanAutomation(AnKuanAutomation):
         mouse.click(coords=pt)
         return True
 
+    def click_absolute(self, x: int, y: int, scope: str = "ankuan") -> None:
+        """Click a raw absolute screen coordinate (not a stored calibration
+        point).  Used only for OCR-suggested result rows after the user has
+        explicitly confirmed the candidate in the UI (see result_ocr.py)."""
+        self._activate_scope(scope)
+        mouse.click(coords=(int(x), int(y)))
+
     def _set_calibrated_text(self, key: str, value: str) -> bool:
         pt = self._point(key)
         if not pt:

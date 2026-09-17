@@ -21,6 +21,12 @@ POINT_KEYS = (
     "inspection_record_button",
     "preview_pdf_button",
     "preview_close_button",
+    # Optional: bounding box of the query result grid, used only to let the
+    # OCR-assisted candidate suggestion (see result_ocr.py) know where to
+    # screenshot.  If left uncalibrated, that feature is simply skipped and
+    # the existing pure-manual selection flow is used unchanged.
+    "result_grid_top_left",
+    "result_grid_bottom_right",
 )
 
 DEFAULT_CONFIG = {
