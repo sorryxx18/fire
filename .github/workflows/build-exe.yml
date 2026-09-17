@@ -30,6 +30,7 @@ jobs:
           python -m PyInstaller --noconfirm --clean --onefile --windowed
           --name "消防安全表自動產製工具"
           --add-data "resources\template.docx;resources"
+          --collect-all pywinauto
           app.py
 
       - name: Build AnKuan UI probe EXE
@@ -56,7 +57,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.1.0
+          TAG: v0.2.0
         run: |
           $main = "dist/消防安全表自動產製工具.exe"
           $probe = "dist/ankuan_ui_probe.exe"
@@ -65,5 +66,5 @@ jobs:
             gh release upload $env:TAG $main --clobber
             gh release upload $env:TAG $probe --clobber
           } else {
-            gh release create $env:TAG $main $probe --title "消防安全表自動產製工具 v0.1.0" --notes "固定格式 PDF → 制式 Word。另附唯讀安管 Windows UI Automation 檢測工具。"
+            gh release create $env:TAG $main $probe --title "消防安全表自動產製工具 v0.2.0" --notes "新增安管場所名稱模糊查詢、人工選擇場所、場所紀錄表自動匯出流程；新版 A4 直式兩欄 Word，事故欄位保留紅色待補句型。仍保留手動 PDF 備援模式。"
           }
