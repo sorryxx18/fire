@@ -57,7 +57,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.2.1
+          TAG: v0.2.2
         run: |
           $main = "dist/消防安全表自動產製工具.exe"
           $releaseMain = "dist/fire_tool.exe"
@@ -68,5 +68,5 @@ jobs:
             gh release upload $env:TAG $releaseMain --clobber
             gh release upload $env:TAG $probe --clobber
           } else {
-            gh release create $env:TAG $releaseMain $probe --title "消防安全表自動產製工具 v0.2.1" --notes "修正舊式安管畫面無法以 UI Automation 辨識場所名稱輸入框的問題：新增 Win32 原生控制項後備辨識，仍維持結構驗證與失敗即停止，不使用固定螢幕座標亂點。"
+            gh release create $env:TAG $releaseMain $probe --title "消防安全表自動產製工具 v0.2.2" --notes "舊式安管查詢結果表格若無法由 Windows UI Automation 讀取，改用安管畫面既有的『存檔(CSV)』功能讀取場所清單並在 APP 內做模糊篩選；選定場所後優先以場所編號精確查詢，不使用 OCR 或固定螢幕座標。"
           }
