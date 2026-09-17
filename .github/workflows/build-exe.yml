@@ -3,6 +3,7 @@ name: build-windows-exe
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -22,7 +23,7 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Syntax check
-        run: python -m py_compile app.py ankuan_automation.py ankuan_config.py ankuan_runtime.py ankuan_manual_flow.py parser.py word_writer.py template_builder.py
+        run: python -m py_compile app.py app_ocr.py ankuan_automation.py ankuan_config.py ankuan_runtime.py ankuan_manual_flow.py ankuan_ocr.py parser.py word_writer.py template_builder.py
 
       - name: Validate Win32 INPUT structure
         shell: pwsh
@@ -32,7 +33,12 @@ jobs:
       - name: Validate config/profile defaults
         shell: pwsh
         run: |
-          python -c "from ankuan_config import DEFAULT_CONFIG, POINT_KEYS; assert all(k in DEFAULT_CONFIG['points'] for k in POINT_KEYS); assert DEFAULT_CONFIG['report']['inspection_history_count'] >= 1"
+          python -c "from ankuan_config import DEFAULT_CONFIG, POINT_KEYS; assert all(k in DEFAULT_CONFIG['points'] for k in POINT_KEYS); assert DEFAULT_CONFIG['report']['inspection_history_count'] >= 1; assert 'ocr' in DEFAULT_CONFIG; assert DEFAULT_CONFIG['ocr']['click_x_ratio'] > 0"
+
+      - name: Validate OCR matching and Windows capability probe
+        shell: pwsh
+        run: |
+          python -c "from ankuan_ocr import match_score, windows_ocr_status; assert match_score('大巨蛋','臺北大巨蛋商場') > .95; assert match_score('大巨蛋','臺北大巨萓商場') > .45; print('Windows OCR status:', windows_ocr_status())"
 
       - name: Build Word template
         run: python template_builder.py
@@ -44,7 +50,7 @@ jobs:
           --name "消防安全表自動產製工具"
           --add-data "resources\template.docx;resources"
           --collect-all pywinauto
-          app.py
+          app_ocr.py
 
       - name: Build AnKuan UI probe EXE
         shell: cmd
@@ -67,10 +73,11 @@ jobs:
           path: dist/ankuan_ui_probe.exe
 
       - name: Publish release assets
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.4.0
+          TAG: v0.4.1
         run: |
           $main = "dist/消防安全表自動產製工具.exe"
           $releaseMain = "dist/fire_tool.exe"
@@ -81,5 +88,5 @@ jobs:
             gh release upload $env:TAG $releaseMain --clobber
             gh release upload $env:TAG $probe --clobber
           } else {
-            gh release create $env:TAG $releaseMain $probe --title "消防安全表自動產製工具 v0.4.0" --notes "定案版流程：查詢結果與安全查察紀錄皆由人工選擇；工具依序產生『場所紀錄表』與『消防安全檢查紀錄表』兩份 PDF，場所紀錄表可設定最近檢查／申報次數，兩份 PDF 會做場所識別檢查後再產 Word。新增預覽視窗相對定位、外部 ankuan_base_profile.json 基本校正、100%＋最大化標準環境檢查、3 點快速校正與本機微調；不使用 CSV。首次建立基本校正前仍需在標準機完成必要控制點校正。"
+            gh release create $env:TAG $releaseMain $probe --title "消防安全表自動產製工具 v0.4.1" --notes "OCR 候選輔助版：場所查詢送出後，以 Windows 本機繁中 OCR 分析目前畫面可見的結果區，僅提供候選並由使用者確認後才點擊；OCR 0 筆、不可用或辨識失敗均退回原人工選取，不自動捲動。保留場所紀錄表 PDF 二次核對與原有安全查察人工選取流程。"
           }
