@@ -37,8 +37,10 @@ jobs:
 
       - name: Validate OCR matching and Windows capability probe
         shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
-          python -c "from ankuan_ocr import match_score, windows_ocr_status; assert match_score('大巨蛋','臺北大巨蛋商場') > .95; assert match_score('大巨蛋','臺北大巨萓商場') > .45; print('Windows OCR status:', windows_ocr_status())"
+          python -c "from ankuan_ocr import match_score, windows_ocr_status; assert match_score('大巨蛋','臺北大巨蛋商場') > .95; assert match_score('大巨蛋','臺北大巨萓商場') > .45; print('Windows OCR status:', ascii(windows_ocr_status()))"
 
       - name: Build Word template
         run: python template_builder.py
