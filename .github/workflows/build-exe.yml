@@ -22,7 +22,7 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Syntax check
-        run: python -m py_compile app.py ankuan_automation.py ankuan_config.py ankuan_runtime.py parser.py word_writer.py template_builder.py
+        run: python -m py_compile app.py ankuan_automation.py ankuan_config.py ankuan_runtime.py ankuan_manual_flow.py parser.py word_writer.py template_builder.py
 
       - name: Validate Win32 INPUT structure
         shell: pwsh
@@ -65,7 +65,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.3.1
+          TAG: v0.3.2
         run: |
           $main = "dist/消防安全表自動產製工具.exe"
           $releaseMain = "dist/fire_tool.exe"
@@ -76,5 +76,5 @@ jobs:
             gh release upload $env:TAG $releaseMain --clobber
             gh release upload $env:TAG $probe --clobber
           } else {
-            gh release create $env:TAG $releaseMain $probe --title "消防安全表自動產製工具 v0.3.1" --notes "修正 Windows 64 位元 SendInput 結構大小錯誤，避免校正後輸入中文場所名稱時出現『Windows 無法送出文字輸入』。設定檔與既有校正點可沿用，不需重新校正。"
+            gh release create $env:TAG $releaseMain $probe --title "消防安全表自動產製工具 v0.3.2" --notes "查詢結果改為人工選擇：工具只負責把場所名稱送入安管並送出查詢，不再讀取舊式結果表格，也不再使用『存檔(CSV)』。使用者在安管畫面選好場所後回工具繼續，匯出場所紀錄表並解析後再以場所名稱、地址二次確認。既有 ankuan_config.json 可沿用。"
           }
