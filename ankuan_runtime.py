@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+from ctypes import wintypes
 import time
 from pathlib import Path
 
@@ -14,22 +15,48 @@ class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
 
+ULONG_PTR = ctypes.c_size_t
+
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
 class KEYBDINPUT(ctypes.Structure):
     _fields_ = [
-        ("wVk", ctypes.c_ushort),
-        ("wScan", ctypes.c_ushort),
-        ("dwFlags", ctypes.c_ulong),
-        ("time", ctypes.c_ulong),
-        ("dwExtraInfo", ctypes.c_void_p),
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
     ]
 
 
 class INPUT_UNION(ctypes.Union):
-    _fields_ = [("ki", KEYBDINPUT)]
+    # INPUT's union must include the largest native member (MOUSEINPUT).
+    # If only KEYBDINPUT is declared, ctypes.sizeof(INPUT) becomes 32 bytes on
+    # x64 instead of the Windows ABI-required 40 bytes and SendInput returns 0.
+    _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT)]
 
 
 class INPUT(ctypes.Structure):
-    _fields_ = [("type", ctypes.c_ulong), ("union", INPUT_UNION)]
+    _anonymous_ = ("union",)
+    _fields_ = [("type", wintypes.DWORD), ("union", INPUT_UNION)]
 
 
 KEYEVENTF_KEYUP = 0x0002
@@ -48,18 +75,22 @@ def get_cursor_position() -> tuple[int, int]:
 
 
 def _send_unicode_text(text: str):
-    user32 = ctypes.windll.user32
-    user32.SendInput.argtypes = [ctypes.c_uint, ctypes.POINTER(INPUT), ctypes.c_int]
-    user32.SendInput.restype = ctypes.c_uint
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+    user32.SendInput.restype = wintypes.UINT
     units = text.encode("utf-16-le")
     for i in range(0, len(units), 2):
         code_unit = int.from_bytes(units[i : i + 2], "little")
-        down = INPUT(INPUT_KEYBOARD, INPUT_UNION(ki=KEYBDINPUT(0, code_unit, KEYEVENTF_UNICODE, 0, None)))
-        up = INPUT(INPUT_KEYBOARD, INPUT_UNION(ki=KEYBDINPUT(0, code_unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, None)))
+        down = INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(0, code_unit, KEYEVENTF_UNICODE, 0, 0))
+        up = INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(0, code_unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, 0))
         arr = (INPUT * 2)(down, up)
+        ctypes.set_last_error(0)
         sent = user32.SendInput(2, arr, ctypes.sizeof(INPUT))
         if sent != 2:
-            raise OSError("Windows 無法送出文字輸入。")
+            err = ctypes.get_last_error()
+            raise OSError(
+                f"Windows 無法送出文字輸入（SendInput={sent}/2，INPUT={ctypes.sizeof(INPUT)} bytes，WinError={err}）。"
+            )
 
 
 def _window_text_from_point(x: int, y: int) -> str | None:
