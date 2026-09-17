@@ -14,7 +14,8 @@ echo [3/3] Building single Windows EXE...
 py -m PyInstaller --noconfirm --clean --onefile --windowed ^
   --name "消防安全表自動產製工具" ^
   --add-data "resources\template.docx;resources" ^
-  app.py
+  --collect-all pywinauto ^
+  app_ocr.py
 if errorlevel 1 goto :fail
 
 echo.
