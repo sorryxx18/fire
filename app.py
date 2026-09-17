@@ -18,14 +18,14 @@ def _short_status(data) -> list[tuple[str, str]]:
         r = data.latest_equipment_inspection
         rows.append(("消防設備檢查", f"{roc_date(r.date)} / {r.result}"))
     else:
-        rows.append(("消防設備檢查", "未找到（Word 保留預留文字）"))
+        rows.append(("消防設備檢查", "未找到（Word 會標註【待補】）"))
     if data.latest_equipment_report:
         r = data.latest_equipment_report
         rows.append(("檢修申報", f"{roc_date(r.received_date)} / {r.period} / {r.result}"))
     else:
-        rows.append(("檢修申報", "未找到（Word 保留預留文字）"))
-    rows.append(("消防防護計畫", roc_date(data.fire_plan_date) if data.fire_plan_date else "未找到（Word 保留預留文字）"))
-    rows.append(("防焰物品", data.flame_retardant_text or "未找到（Word 保留預留文字）"))
+        rows.append(("檢修申報", "未找到（Word 會標註【待補】）"))
+    rows.append(("消防防護計畫", roc_date(data.fire_plan_date) if data.fire_plan_date else "未找到（Word 會標註【待補】）"))
+    rows.append(("防焰物品", data.flame_retardant_text or "未找到（Word 會標註【待補】）"))
     return rows
 
 
@@ -104,7 +104,7 @@ class App(tk.Tk):
             messagebox.showerror("產生失敗", f"{e}\n\n{traceback.format_exc()}")
             return
         self.status_var.set(f"完成：{out.name}")
-        messagebox.showinfo("完成", "Word 已產生。\n\n已自動填入：\n- " + "\n- ".join(updated) + "\n\n火災發生後資料及 PDF 未提供資料均維持制式預留文字。")
+        messagebox.showinfo("完成", "Word 已產生。\n\n已自動填入：\n- " + "\n- ".join(updated) + "\n\n尚未自動填入的欄位會在 Word 內以紅色【待補】標註，並保留原制式預留文字。")
 
 
 def main():
