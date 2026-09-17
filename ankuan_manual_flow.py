@@ -3,17 +3,20 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+from pywinauto import mouse
+
 from ankuan_automation import AnKuanError
+from ankuan_ocr import OcrReadError, OcrUnavailable, VisibleOcrCandidate, read_visible_candidates
 from ankuan_runtime import CalibratedAnKuanAutomation
 
 
 class ManualSelectionAnKuanAutomation(CalibratedAnKuanAutomation):
-    """Safe AnKuan flow with human selection for legacy grids.
+    """Safe AnKuan flow with human confirmation for legacy grids.
 
     The production query/inspection grids are custom-drawn and are not reliably
-    readable through UIA/Win32.  The tool therefore automates only deterministic
-    read-only navigation and report generation.  The user chooses the correct
-    place and the correct inspection record in AnKuan.
+    readable through UIA/Win32.  v0.4.1 can use Windows OCR to propose candidates
+    from the currently visible place-result region, but the user still decides
+    which row to select.  OCR failure always falls back to the v0.4.0 manual flow.
     """
 
     def submit_place_name_query(self, query: str) -> None:
@@ -33,6 +36,71 @@ class ManualSelectionAnKuanAutomation(CalibratedAnKuanAutomation):
             )
         self._set_calibrated_text("place_name", query)
         self._click_query()
+
+    # ---------- OCR helper for the visible query result grid ----------
+    def _result_grid_rect(self) -> tuple[int, int, int, int]:
+        self.reload_config()
+        area = self.config.get("ocr", {}).get("result_grid_area")
+        if not isinstance(area, dict):
+            raise OcrUnavailable("尚未校正 OCR 查詢結果區域；已改用人工選取。")
+        r = self.get_scope_rect("ankuan")
+        if not r:
+            raise OcrReadError("找不到安管主視窗；已改用人工選取。")
+        width = max(1, r.right - r.left)
+        height = max(1, r.bottom - r.top)
+        try:
+            left = r.left + int(width * float(area["left"]))
+            top = r.top + int(height * float(area["top"]))
+            right = r.left + int(width * float(area["right"]))
+            bottom = r.top + int(height * float(area["bottom"]))
+        except Exception as exc:
+            raise OcrReadError("OCR 結果區域校正資料無效；已改用人工選取。") from exc
+        if right - left < 8 or bottom - top < 8:
+            raise OcrReadError("OCR 結果區域太小；已改用人工選取。")
+        return left, top, right, bottom
+
+    def read_visible_ocr_candidates(self, query: str) -> tuple[list[VisibleOcrCandidate], str]:
+        """Read only the currently visible result rows.  Never scroll automatically."""
+        self.reload_config()
+        if not bool(self.config.get("ocr", {}).get("enabled", True)):
+            raise OcrUnavailable("OCR 已停用；已改用人工選取。")
+        left, top, right, bottom = self._result_grid_rect()
+        main = self.get_scope_rect("ankuan")
+        row_ratio = self.config.get("ocr", {}).get("result_row_height_ratio")
+        expected_row_height = None
+        if main and row_ratio is not None:
+            try:
+                expected_row_height = max(3.0, (main.bottom - main.top) * float(row_ratio))
+            except Exception:
+                expected_row_height = None
+        self.activate()
+        time.sleep(0.12)
+        return read_visible_candidates(
+            query,
+            left=left,
+            top=top,
+            width=right - left,
+            height=bottom - top,
+            expected_row_height=expected_row_height,
+        )
+
+    def click_ocr_candidate(self, candidate: VisibleOcrCandidate) -> tuple[int, int]:
+        """Click the confirmed row at a stable X inside the grid, not on an OCR word box."""
+        left, top, right, bottom = self._result_grid_rect()
+        self.reload_config()
+        try:
+            x_ratio = float(self.config.get("ocr", {}).get("click_x_ratio", 0.35))
+        except Exception:
+            x_ratio = 0.35
+        x_ratio = min(0.85, max(0.15, x_ratio))
+        x = left + int((right - left) * x_ratio)
+        y = top + int(round(candidate.row_center_y))
+        if not (left <= x <= right and top <= y <= bottom):
+            raise AnKuanError("OCR 候選列位置超出目前結果區域，未執行點擊。請改用人工選取。")
+        self.activate()
+        mouse.click(coords=(x, y))
+        time.sleep(self._timing("after_select", 0.4))
+        return x, y
 
     def prepare_selected_place_for_export(self) -> None:
         self.reload_config()
