@@ -24,7 +24,7 @@ jobs:
       - name: Build Word template
         run: python template_builder.py
 
-      - name: Build EXE
+      - name: Build main EXE
         shell: cmd
         run: >-
           python -m PyInstaller --noconfirm --clean --onefile --windowed
@@ -32,22 +32,38 @@ jobs:
           --add-data "resources\template.docx;resources"
           app.py
 
-      - name: Upload Actions artifact
+      - name: Build AnKuan UI probe EXE
+        shell: cmd
+        run: >-
+          python -m PyInstaller --noconfirm --clean --onefile --windowed
+          --name "ankuan_ui_probe"
+          --collect-all pywinauto
+          uia_probe.py
+
+      - name: Upload main app artifact
         uses: actions/upload-artifact@v4
         with:
           name: 消防安全表自動產製工具
           path: dist/消防安全表自動產製工具.exe
 
-      - name: Publish v0.1.0 release asset
+      - name: Upload UI probe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ankuan-ui-probe
+          path: dist/ankuan_ui_probe.exe
+
+      - name: Publish release assets
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: v0.1.0
         run: |
-          $asset = "dist/消防安全表自動產製工具.exe"
+          $main = "dist/消防安全表自動產製工具.exe"
+          $probe = "dist/ankuan_ui_probe.exe"
           gh release view $env:TAG 2>$null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG $asset --clobber
+            gh release upload $env:TAG $main --clobber
+            gh release upload $env:TAG $probe --clobber
           } else {
-            gh release create $env:TAG $asset --title "消防安全表自動產製工具 v0.1.0" --notes "固定格式 PDF → 制式 Word。單一 Windows EXE，不需要安裝 Python，不使用 AI。"
+            gh release create $env:TAG $main $probe --title "消防安全表自動產製工具 v0.1.0" --notes "固定格式 PDF → 制式 Word。另附唯讀安管 Windows UI Automation 檢測工具。"
           }
