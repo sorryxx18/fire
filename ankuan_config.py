@@ -21,16 +21,15 @@ POINT_KEYS = (
     "inspection_record_button",
     "preview_pdf_button",
     "preview_close_button",
-    # Optional: bounding box of the query result grid, used only to let the
-    # OCR-assisted candidate suggestion (see result_ocr.py) know where to
-    # screenshot.  If left uncalibrated, that feature is simply skipped and
-    # the existing pure-manual selection flow is used unchanged.
+    # Optional OCR result-grid corners. They are stored as ordinary points, so
+    # their X/Y values are ratios relative to the AnKuan main window rather
+    # than absolute screen pixels.
     "result_grid_top_left",
     "result_grid_bottom_right",
 )
 
 DEFAULT_CONFIG = {
-    "version": 2,
+    "version": 3,
     "window_title_contains": "臺北市政府消防局安全管理系統",
     "timing": {
         "open_page": 0.8,
@@ -51,11 +50,19 @@ DEFAULT_CONFIG = {
         "inspection_history_count": 5,
         "submission_history_count": 2,
     },
+    "ocr": {
+        "enabled": True,
+        # Optional helper only. OCR can still group words into rows without it.
+        "result_row_height_ratio": None,
+        # Stable X position inside a result row. Y always comes from the OCR row
+        # center; we deliberately never click an OCR word bounding-box center.
+        "click_x_ratio": 0.35,
+    },
     "points": {key: None for key in POINT_KEYS},
 }
 
 BASE_PROFILE_DEFAULT = {
-    "version": 1,
+    "version": 2,
     "name": "安管標準校正",
     "standard_environment": {
         "display_scale_percent": 100,
@@ -66,6 +73,11 @@ BASE_PROFILE_DEFAULT = {
     "report": {
         "inspection_history_count": 5,
         "submission_history_count": 2,
+    },
+    "ocr": {
+        "enabled": True,
+        "result_row_height_ratio": None,
+        "click_x_ratio": 0.35,
     },
     "points": {key: None for key in POINT_KEYS},
 }
@@ -118,6 +130,7 @@ def _seed_from_base() -> dict:
     cfg = deepcopy(DEFAULT_CONFIG)
     base = load_base_profile()
     cfg["report"] = _merge(cfg["report"], base.get("report", {}))
+    cfg["ocr"] = _merge(cfg["ocr"], base.get("ocr", {}))
     for key in POINT_KEYS:
         p = base.get("points", {}).get(key)
         if isinstance(p, dict) and "x" in p and "y" in p:
@@ -137,13 +150,18 @@ def load_config() -> dict:
         return seed
 
     cfg = _merge(seed, raw)
-    # Older v0.3.x configs contain many explicit null points.  Treat null as
-    # "no local override" so a portable base profile can still supply them.
+    # Older configs contain explicit null points. Treat null as "no local
+    # override" so a portable base profile can still supply them.
     raw_points = raw.get("points", {}) if isinstance(raw, dict) else {}
     base_points = seed.get("points", {})
     for key in POINT_KEYS:
         if raw_points.get(key) is None and isinstance(base_points.get(key), dict):
             cfg["points"][key] = deepcopy(base_points[key])
+
+    raw_ocr = raw.get("ocr", {}) if isinstance(raw, dict) else {}
+    base_ocr = seed.get("ocr", {})
+    if raw_ocr.get("result_row_height_ratio") is None and base_ocr.get("result_row_height_ratio") is not None:
+        cfg["ocr"]["result_row_height_ratio"] = base_ocr["result_row_height_ratio"]
     return cfg
 
 
@@ -212,10 +230,22 @@ def set_report_counts(inspection_count: int, submission_count: int) -> Path:
     return save_config(cfg)
 
 
+def save_result_row_height_ratio(value: float | None) -> Path:
+    cfg = load_config()
+    if value is None:
+        cfg["ocr"]["result_row_height_ratio"] = None
+        return save_config(cfg)
+    ratio = abs(float(value))
+    if not (0.002 <= ratio <= 0.2):
+        raise ValueError("列高校正值異常，請指定相鄰兩列的中心點。")
+    cfg["ocr"]["result_row_height_ratio"] = round(ratio, 6)
+    return save_config(cfg)
+
+
 def save_current_as_base_profile(reference_environment: dict | None = None) -> Path:
     """Save this standard machine's current calibration as a portable profile.
 
-    The profile is intentionally external to the EXE.  Copying
+    The profile is intentionally external to the EXE. Copying
     ``fire_tool.exe`` together with ``ankuan_base_profile.json`` gives another
     computer the same starting calibration without repackaging.
     """
@@ -223,6 +253,7 @@ def save_current_as_base_profile(reference_environment: dict | None = None) -> P
     base = deepcopy(BASE_PROFILE_DEFAULT)
     base["points"] = deepcopy(cfg.get("points", {}))
     base["report"] = deepcopy(cfg.get("report", base["report"]))
+    base["ocr"] = deepcopy(cfg.get("ocr", base["ocr"]))
     if reference_environment:
         base["standard_environment"] = _merge(base["standard_environment"], reference_environment)
     path = base_profile_path()
