@@ -24,7 +24,7 @@ POINT_KEYS = (
 )
 
 DEFAULT_CONFIG = {
-    "version": 2,
+    "version": 3,
     "window_title_contains": "臺北市政府消防局安全管理系統",
     "timing": {
         "open_page": 0.8,
@@ -45,11 +45,17 @@ DEFAULT_CONFIG = {
         "inspection_history_count": 5,
         "submission_history_count": 2,
     },
+    "ocr": {
+        "enabled": True,
+        "result_grid_area": None,
+        "result_row_height_ratio": None,
+        "click_x_ratio": 0.35,
+    },
     "points": {key: None for key in POINT_KEYS},
 }
 
 BASE_PROFILE_DEFAULT = {
-    "version": 1,
+    "version": 2,
     "name": "安管標準校正",
     "standard_environment": {
         "display_scale_percent": 100,
@@ -60,6 +66,12 @@ BASE_PROFILE_DEFAULT = {
     "report": {
         "inspection_history_count": 5,
         "submission_history_count": 2,
+    },
+    "ocr": {
+        "enabled": True,
+        "result_grid_area": None,
+        "result_row_height_ratio": None,
+        "click_x_ratio": 0.35,
     },
     "points": {key: None for key in POINT_KEYS},
 }
@@ -112,6 +124,7 @@ def _seed_from_base() -> dict:
     cfg = deepcopy(DEFAULT_CONFIG)
     base = load_base_profile()
     cfg["report"] = _merge(cfg["report"], base.get("report", {}))
+    cfg["ocr"] = _merge(cfg["ocr"], base.get("ocr", {}))
     for key in POINT_KEYS:
         p = base.get("points", {}).get(key)
         if isinstance(p, dict) and "x" in p and "y" in p:
@@ -138,6 +151,16 @@ def load_config() -> dict:
     for key in POINT_KEYS:
         if raw_points.get(key) is None and isinstance(base_points.get(key), dict):
             cfg["points"][key] = deepcopy(base_points[key])
+
+    # Apply the same compatibility rule to OCR calibration.  An existing local
+    # config should not mask a portable base profile merely because an older
+    # version wrote no OCR values.
+    raw_ocr = raw.get("ocr", {}) if isinstance(raw, dict) else {}
+    base_ocr = seed.get("ocr", {})
+    if raw_ocr.get("result_grid_area") is None and isinstance(base_ocr.get("result_grid_area"), dict):
+        cfg["ocr"]["result_grid_area"] = deepcopy(base_ocr["result_grid_area"])
+    if raw_ocr.get("result_row_height_ratio") is None and base_ocr.get("result_row_height_ratio") is not None:
+        cfg["ocr"]["result_row_height_ratio"] = base_ocr["result_row_height_ratio"]
     return cfg
 
 
@@ -206,6 +229,58 @@ def set_report_counts(inspection_count: int, submission_count: int) -> Path:
     return save_config(cfg)
 
 
+def save_result_grid_area(left: float, top: float, right: float, bottom: float) -> Path:
+    values = [float(left), float(top), float(right), float(bottom)]
+    if not all(0 <= value <= 1 for value in values):
+        raise ValueError("OCR 結果區域必須位於安管主視窗內。")
+    left, top, right, bottom = values
+    if right - left < 0.02 or bottom - top < 0.02:
+        raise ValueError("OCR 結果區域太小，請重新校正左上角與右下角。")
+    cfg = load_config()
+    cfg["ocr"]["result_grid_area"] = {
+        "left": round(left, 6),
+        "top": round(top, 6),
+        "right": round(right, 6),
+        "bottom": round(bottom, 6),
+    }
+    return save_config(cfg)
+
+
+def save_result_row_height_ratio(value: float | None) -> Path:
+    cfg = load_config()
+    if value is None:
+        cfg["ocr"]["result_row_height_ratio"] = None
+        return save_config(cfg)
+    ratio = float(value)
+    if not (0.002 <= ratio <= 0.2):
+        raise ValueError("列高校正值異常，請指定相鄰兩列的中心點。")
+    cfg["ocr"]["result_row_height_ratio"] = round(ratio, 6)
+    return save_config(cfg)
+
+
+def save_ocr_calibration(*, area: dict | None = None, row_height_ratio: float | None = None) -> Path:
+    cfg = load_config()
+    if area is not None:
+        left = float(area["left"])
+        top = float(area["top"])
+        right = float(area["right"])
+        bottom = float(area["bottom"])
+        if not all(0 <= value <= 1 for value in (left, top, right, bottom)) or right <= left or bottom <= top:
+            raise ValueError("OCR 結果區域校正值無效。")
+        cfg["ocr"]["result_grid_area"] = {
+            "left": round(left, 6),
+            "top": round(top, 6),
+            "right": round(right, 6),
+            "bottom": round(bottom, 6),
+        }
+    if row_height_ratio is not None:
+        ratio = float(row_height_ratio)
+        if not (0.002 <= ratio <= 0.2):
+            raise ValueError("OCR 列高校正值無效。")
+        cfg["ocr"]["result_row_height_ratio"] = round(ratio, 6)
+    return save_config(cfg)
+
+
 def save_current_as_base_profile(reference_environment: dict | None = None) -> Path:
     """Save this standard machine's current calibration as a portable profile.
 
@@ -217,6 +292,7 @@ def save_current_as_base_profile(reference_environment: dict | None = None) -> P
     base = deepcopy(BASE_PROFILE_DEFAULT)
     base["points"] = deepcopy(cfg.get("points", {}))
     base["report"] = deepcopy(cfg.get("report", base["report"]))
+    base["ocr"] = deepcopy(cfg.get("ocr", base["ocr"]))
     if reference_environment:
         base["standard_environment"] = _merge(base["standard_environment"], reference_environment)
     path = base_profile_path()
