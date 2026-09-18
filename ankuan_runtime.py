@@ -367,6 +367,101 @@ class CalibratedAnKuanAutomation(AnKuanAutomation):
         super().open_safety_inspection()
 
     # ---------- preview export ----------
+    @staticmethod
+    def _looks_like_pdf_export_dialog(title: str) -> bool:
+        """Return True for the report viewer's intermediate PDF export dialog.
+
+        On the production client, clicking the preview PDF icon does not always
+        open the Windows Save As dialog directly.  It can first open a report
+        viewer dialog titled like "匯出到 PDF" that requires an explicit
+        "確定" click.  Keep this match deliberately narrow so unrelated dialogs
+        are never accepted.
+        """
+        text = (title or "").strip().lower()
+        return bool(
+            ("pdf" in text and "匯出" in text)
+            or "export to pdf" in text
+            or "export pdf" in text
+        )
+
+    @staticmethod
+    def _click_dialog_button(dialog, names: tuple[str, ...]) -> bool:
+        """Click a named button inside one already-identified modal dialog."""
+        wanted = {name.strip().lower() for name in names}
+        try:
+            controls = dialog.descendants()
+        except Exception:
+            controls = []
+
+        for ctrl in controls:
+            text = _safe_text(ctrl).strip().lower()
+            if text not in wanted:
+                continue
+            ctype = (_control_type(ctrl) or "").lower()
+            friendly = (_friendly_class(ctrl) or "").lower()
+            if ctype and ctype != "button" and "button" not in friendly:
+                continue
+            for method in ("invoke", "click_input", "click"):
+                try:
+                    getattr(ctrl, method)()
+                    return True
+                except Exception:
+                    continue
+        return False
+
+    def _confirm_pdf_export_dialog(self, timeout: float = 4.0) -> bool:
+        """Confirm the intermediate report-viewer PDF export dialog if present.
+
+        Returns True when that dialog was found and confirmed.  Returns False
+        when no such dialog appeared, which preserves compatibility with
+        clients that go directly from the preview PDF icon to Save As.
+
+        If the exact PDF-export dialog appears but cannot be confirmed, stop
+        with a specific error instead of misleading the user into recalibrating
+        the already-correct preview PDF icon.
+        """
+        deadline = time.time() + max(0.2, float(timeout))
+        seen = False
+
+        while time.time() < deadline:
+            for backend in ("uia", "win32"):
+                try:
+                    windows = Desktop(backend=backend).windows()
+                except Exception:
+                    continue
+                for dialog in windows:
+                    title = _safe_text(dialog)
+                    if not self._looks_like_pdf_export_dialog(title):
+                        continue
+                    seen = True
+                    try:
+                        dialog.set_focus()
+                    except Exception:
+                        pass
+
+                    if self._click_dialog_button(dialog, ("確定", "OK")):
+                        time.sleep(0.25)
+                        return True
+
+                    # The production dialog shows "確定" as the default button.
+                    # Enter is a safe last resort only after the exact PDF-export
+                    # dialog itself has been positively identified by title.
+                    try:
+                        dialog.set_focus()
+                        keyboard.send_keys("{ENTER}")
+                        time.sleep(0.25)
+                        return True
+                    except Exception:
+                        pass
+            time.sleep(0.12)
+
+        if seen:
+            raise AnKuanError(
+                "已開啟「匯出到 PDF」設定視窗，但無法操作其中的「確定」按鈕。"
+                "請保持該視窗開啟並截圖回報；這不是「預覽 PDF 匯出按鈕」校正問題。"
+            )
+        return False
+
     def save_current_preview_pdf(self, kind: str, timeout: int = 30) -> Path:
         self.reload_config()
         self.wait_for_preview(timeout=min(timeout, 12))
@@ -377,18 +472,37 @@ class CalibratedAnKuanAutomation(AnKuanAutomation):
 
         before = self._snapshot_files(".pdf")
         target = Path(tempfile.gettempdir()) / f"ankuan_{kind}_{int(time.time() * 1000)}.pdf"
+
+        # Production flow can be:
+        # preview PDF icon -> "匯出到 PDF" settings -> 確定 -> Windows Save As.
+        # Some clients may skip the intermediate settings dialog, so keep the
+        # old direct-to-Save-As path as a compatible fallback.
         self._click_point("preview_pdf_button")
         time.sleep(self._timing("after_preview_export", 0.5))
+        confirmed_export_settings = self._confirm_pdf_export_dialog(timeout=4.0)
+
         try:
-            self._try_save_dialog(target)
+            save_dialog_handled = self._try_save_dialog(target, timeout=5.0)
         except Exception:
-            pass
+            save_dialog_handled = False
 
         pdf = target if target.exists() else self._wait_new_file(".pdf", before, timeout=timeout)
         if not pdf:
+            if confirmed_export_settings and not save_dialog_handled:
+                raise AnKuanError(
+                    "已確認「匯出到 PDF」設定，但沒有偵測到 Windows「另存新檔」視窗，也沒有取得 PDF。"
+                    "請確認畫面是否仍停在匯出設定或另存新檔視窗。"
+                )
+            if save_dialog_handled:
+                raise AnKuanError(
+                    "已操作 Windows「另存新檔」視窗，但沒有取得 PDF。"
+                    "請確認儲存位置是否可寫入，或截圖回報目前畫面。"
+                )
             raise AnKuanError(
-                "已操作預覽器的 PDF 匯出按鈕，但沒有取得 PDF。請確認校正的是實際『儲存／匯出 PDF』按鈕。"
+                "點擊預覽器 PDF 匯出按鈕後，未能完成 PDF 儲存。"
+                "程式沒有偵測到可處理的「匯出到 PDF」或「另存新檔」流程；請截圖回報目前畫面。"
             )
+
         self.close_preview()
         return Path(pdf)
 
