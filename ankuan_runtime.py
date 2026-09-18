@@ -203,24 +203,33 @@ class CalibratedAnKuanAutomation(AnKuanAutomation):
         }
 
     def _find_preview_window(self):
-        candidates = []
-        for backend in ("win32", "uia"):
+        def collect(backend: str):
+            candidates = []
             try:
-                for w in Desktop(backend=backend).windows():
-                    text = _safe_text(w)
-                    cls = _class_name(w)
-                    if "預覽" not in text and "preview" not in text.lower():
-                        continue
-                    r = _rect(w)
-                    if not r or r.right <= r.left or r.bottom <= r.top:
-                        continue
-                    candidates.append(((r.right - r.left) * (r.bottom - r.top), w))
+                windows = Desktop(backend=backend).windows()
             except Exception:
-                continue
-        if not candidates:
-            return None
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        return candidates[0][1]
+                return candidates
+            for w in windows:
+                text = _safe_text(w)
+                if "預覽" not in text and "preview" not in text.lower():
+                    continue
+                r = _rect(w)
+                if not r or r.right <= r.left or r.bottom <= r.top:
+                    continue
+                candidates.append(((r.right - r.left) * (r.bottom - r.top), w))
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            return candidates
+
+        # The report viewer is a legacy native window. Prefer Win32 and return
+        # immediately when found so we do not traverse the same viewer through
+        # UIA, which has caused native access violations on the real client.
+        candidates = collect("win32")
+        if candidates:
+            return candidates[0][1]
+
+        # Compatibility fallback for a different viewer implementation.
+        candidates = collect("uia")
+        return candidates[0][1] if candidates else None
 
     def wait_for_preview(self, timeout: float = 12.0):
         end = time.time() + timeout
