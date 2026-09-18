@@ -42,6 +42,14 @@ jobs:
         run: |
           python -c "from result_ocr import match_score; assert match_score('大巨蛋','臺北大巨蛋商場') > .95; assert match_score('大巨蛋','臺北大巨萓商場') > .58; assert match_score('洲際','臺北洲際酒店') > .95; print('OCR matching tests passed')"
 
+      - name: Validate OCR auto-grid and PDF dialog rules
+        shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python -c "from result_ocr import OcrWord,_find_result_header; rows=[[OcrWord('其他',0,0,10,10)],[OcrWord('場所編號',0,20,50,10),OcrWord('場所名稱',80,20,50,10),OcrWord('場所地址',160,20,50,10)]]; assert _find_result_header(rows)==1; print('OCR auto-grid header test passed')"
+          python -c "from ankuan_runtime import CalibratedAnKuanAutomation as C; assert C._is_pdf_export_dialog_title('匯出到 PDF'); assert C._is_pdf_export_dialog_title('Export to PDF'); assert not C._is_pdf_export_dialog_title('預覽'); print('PDF dialog matcher test passed')"
+
       - name: Build Word template
         run: python template_builder.py
 
@@ -49,7 +57,7 @@ jobs:
         shell: cmd
         run: >-
           python -m PyInstaller --noconfirm --clean --onefile --windowed
-          --name "消防安全表自動產製工具"
+          --name "消防安全表自動產製工具_v0.4.2-test_OCR狀態-PDF匯出修正"
           --add-data "resources\template.docx;resources"
           --collect-all pywinauto
           --collect-all winocr
@@ -67,8 +75,8 @@ jobs:
       - name: Upload main app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 消防安全表自動產製工具
-          path: dist/消防安全表自動產製工具.exe
+          name: 消防安全表自動產製工具_v0.4.2-test_OCR狀態-PDF匯出修正
+          path: dist/消防安全表自動產製工具_v0.4.2-test_OCR狀態-PDF匯出修正.exe
 
       - name: Upload UI probe artifact
         uses: actions/upload-artifact@v4
@@ -83,7 +91,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: v0.4.1
         run: |
-          $main = "dist/消防安全表自動產製工具.exe"
+          $main = "dist/消防安全表自動產製工具_v0.4.2-test_OCR狀態-PDF匯出修正.exe"
           $releaseMain = "dist/fire_tool.exe"
           $probe = "dist/ankuan_ui_probe.exe"
           Copy-Item $main $releaseMain -Force
