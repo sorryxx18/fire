@@ -367,6 +367,57 @@ class CalibratedAnKuanAutomation(AnKuanAutomation):
         super().open_safety_inspection()
 
     # ---------- preview export ----------
+    @staticmethod
+    def _is_pdf_export_dialog_title(title: str) -> bool:
+        text = (title or "").strip().lower()
+        return bool(
+            ("pdf" in text and "匯出" in text)
+            or "export to pdf" in text
+            or "export pdf" in text
+        )
+
+    def _confirm_pdf_export_dialog_win32(self, timeout: float = 4.0) -> bool:
+        """Confirm the legacy intermediate PDF-export dialog using Win32 only.
+
+        Real-device testing showed that walking this legacy viewer with UIA can
+        trigger native access-violation crashes.  Therefore this helper never
+        asks UIA for descendants.  It only enumerates Win32 top-level windows,
+        matches the exact PDF-export dialog by title, focuses that window, and
+        sends Enter (the dialog's default "確定" action).
+
+        Returns False when no intermediate dialog appears so clients that jump
+        directly from the PDF icon to Save As remain supported.
+        """
+        deadline = time.time() + max(0.2, float(timeout))
+        while time.time() < deadline:
+            try:
+                windows = Desktop(backend="win32").windows()
+            except Exception:
+                windows = []
+            for dialog in windows:
+                title = _safe_text(dialog)
+                if not self._is_pdf_export_dialog_title(title):
+                    continue
+                try:
+                    dialog.set_focus()
+                except Exception:
+                    try:
+                        dialog.set_foreground()
+                    except Exception:
+                        pass
+                time.sleep(0.08)
+                try:
+                    keyboard.send_keys("{ENTER}", pause=0.03)
+                    time.sleep(0.3)
+                    return True
+                except Exception as exc:
+                    raise AnKuanError(
+                        "已辨識到「匯出到 PDF」視窗，但無法送出「確定」。"
+                        f"\n{exc}\n請保持該視窗開啟並截圖回報。"
+                    ) from exc
+            time.sleep(0.12)
+        return False
+
     def save_current_preview_pdf(self, kind: str, timeout: int = 30) -> Path:
         self.reload_config()
         self.wait_for_preview(timeout=min(timeout, 12))
@@ -377,18 +428,35 @@ class CalibratedAnKuanAutomation(AnKuanAutomation):
 
         before = self._snapshot_files(".pdf")
         target = Path(tempfile.gettempdir()) / f"ankuan_{kind}_{int(time.time() * 1000)}.pdf"
+
+        # Confirmed production path:
+        # Preview PDF icon -> legacy "匯出到 PDF" -> Enter/確定 -> Windows Save As.
+        # No UIA traversal is used for the legacy export dialog.
         self._click_point("preview_pdf_button")
         time.sleep(self._timing("after_preview_export", 0.5))
+        export_confirmed = self._confirm_pdf_export_dialog_win32(timeout=4.0)
+
         try:
-            self._try_save_dialog(target)
+            save_dialog_handled = self._try_save_dialog(target, timeout=6.0)
         except Exception:
-            pass
+            save_dialog_handled = False
 
         pdf = target if target.exists() else self._wait_new_file(".pdf", before, timeout=timeout)
         if not pdf:
+            if export_confirmed and not save_dialog_handled:
+                raise AnKuanError(
+                    "已通過「匯出到 PDF」確認，但沒有偵測到 Windows「另存新檔」視窗，也沒有取得 PDF。"
+                    "請截圖目前畫面回報。"
+                )
+            if save_dialog_handled:
+                raise AnKuanError(
+                    "已操作 Windows「另存新檔」視窗，但沒有取得 PDF。"
+                    "請確認儲存位置可寫入，或截圖目前畫面回報。"
+                )
             raise AnKuanError(
-                "已操作預覽器的 PDF 匯出按鈕，但沒有取得 PDF。請確認校正的是實際『儲存／匯出 PDF』按鈕。"
+                "PDF 匯出流程未完成。沒有取得 PDF；請截圖目前停留的視窗回報。"
             )
+
         self.close_preview()
         return Path(pdf)
 
@@ -396,15 +464,21 @@ class CalibratedAnKuanAutomation(AnKuanAutomation):
         w = self._find_preview_window()
         if w is None:
             return
-        if self._click_point("preview_close_button"):
-            time.sleep(0.4)
-            return
+
+        # Prefer closing the preview window itself.  The old calibrated
+        # "preview_close_button" may point at a stale location on this viewer.
         try:
             w.close()
             time.sleep(0.4)
-            return
+            if self._find_preview_window() is None:
+                return
         except Exception:
             pass
+
+        if self._click_point("preview_close_button"):
+            time.sleep(0.4)
+            return
+
         try:
             self._activate_scope("preview")
             keyboard.send_keys("%{F4}")
