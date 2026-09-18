@@ -23,7 +23,7 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Syntax check
-        run: python -m py_compile app.py app_ocr.py ankuan_automation.py ankuan_config.py ankuan_runtime.py ankuan_manual_flow.py parser.py word_writer.py template_builder.py result_ocr.py
+        run: python -m py_compile app.py app_ocr.py app_test3.py ankuan_automation.py ankuan_config.py ankuan_runtime.py ankuan_manual_flow.py parser.py word_writer.py template_builder.py result_ocr.py
 
       - name: Validate Win32 INPUT structure
         shell: pwsh
@@ -52,6 +52,13 @@ jobs:
           python -c "from result_ocr import OcrWord,_find_result_header; rows=[[OcrWord('其他',0,0,10,10)],[OcrWord('場所編號',0,20,50,10),OcrWord('場所名稱',80,20,50,10),OcrWord('場所地址',160,20,50,10)]]; assert _find_result_header(rows)==1; print('OCR auto-grid header test passed')"
           python -c "from ankuan_runtime import CalibratedAnKuanAutomation as C; assert C._is_pdf_export_dialog_title('匯出到 PDF'); assert C._is_pdf_export_dialog_title('Export to PDF'); assert not C._is_pdf_export_dialog_title('預覽'); print('PDF dialog matcher test passed')"
 
+      - name: Validate TEST3 Desktop-first PDF naming
+        shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python -c "import app_test3; p=app_test3._desktop_pdf_target('place_record'); assert p.parent.exists(); assert p.suffix.lower()=='.pdf'; assert '場所紀錄表' in p.name; print('Desktop PDF target=', p)"
+
       - name: Build Word template
         run: python template_builder.py
 
@@ -59,12 +66,12 @@ jobs:
         shell: cmd
         run: >-
           python -m PyInstaller --noconfirm --clean --onefile --windowed
-          --name "消防安全表自動產製工具_v0.4.2-test2_內建校正_OCR狀態-PDF匯出修正"
+          --name "消防安全表自動產製工具_v0.4.2-test3_桌面PDF_內建校正_OCR狀態-PDF匯出修正"
           --add-data "resources\template.docx;resources"
           --collect-all pywinauto
           --collect-all winocr
           --collect-all winrt
-          app_ocr.py
+          app_test3.py
 
       - name: Build AnKuan UI probe EXE
         shell: cmd
@@ -77,8 +84,8 @@ jobs:
       - name: Upload main app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 消防安全表自動產製工具_v0.4.2-test2_內建校正_OCR狀態-PDF匯出修正
-          path: dist/消防安全表自動產製工具_v0.4.2-test2_內建校正_OCR狀態-PDF匯出修正.exe
+          name: 消防安全表自動產製工具_v0.4.2-test3_桌面PDF_內建校正_OCR狀態-PDF匯出修正
+          path: dist/消防安全表自動產製工具_v0.4.2-test3_桌面PDF_內建校正_OCR狀態-PDF匯出修正.exe
 
       - name: Upload UI probe artifact
         uses: actions/upload-artifact@v4
@@ -93,7 +100,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: v0.4.1
         run: |
-          $main = "dist/消防安全表自動產製工具_v0.4.2-test2_內建校正_OCR狀態-PDF匯出修正.exe"
+          $main = "dist/消防安全表自動產製工具_v0.4.2-test3_桌面PDF_內建校正_OCR狀態-PDF匯出修正.exe"
           $releaseMain = "dist/fire_tool.exe"
           $probe = "dist/ankuan_ui_probe.exe"
           Copy-Item $main $releaseMain -Force
