@@ -5,19 +5,20 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from app import App as BaseApp
+from app import App as BaseApp, BUILD_NOTE
 from ankuan_config import load_config, save_result_row_height_ratio
 from ankuan_manual_flow import ManualSelectionAnKuanAutomation
 from ankuan_runtime import get_cursor_position
-from result_ocr import ResultCandidate, find_result_candidates
+from result_ocr import ResultCandidate, scan_result_candidates
 
 
 class OcrCandidateApp(BaseApp):
-    """v0.4.1 UI: OCR proposes visible candidates; the human always decides."""
+    """v0.4.2 TEST: OCR proposes visible candidates; the human always decides."""
 
     def __init__(self):
         self._row_calibration_state = None
         super().__init__()
+        self.status_var.set(f"{BUILD_NOTE}｜請先登入並開啟安管系統。")
 
     # ---------- automatic flow UI ----------
     def _build_auto_tab(self):
@@ -135,37 +136,37 @@ class OcrCandidateApp(BaseApp):
         """Offer visible OCR candidates. Never clicks without explicit confirmation."""
         if not self.automation:
             return False
-        self.status_var.set("正在 OCR 目前畫面可見的查詢結果……")
+
+        self.status_var.set("OCR：正在辨識目前畫面可見的查詢結果……")
         self.update_idletasks()
 
         try:
-            candidates = find_result_candidates(self.automation, query)
+            report = scan_result_candidates(self.automation, query)
         except Exception as exc:
             self._manual_fallback_guide(query, f"辨識失敗（{exc}），已回到人工模式。")
             return False
 
-        if candidates is None:
-            self._manual_fallback_guide(query, "OCR 或結果區校正目前不可用，已回到人工模式。")
-            if show_zero_message:
+        # Make OCR state visible every time; no more silent fallback.
+        self.status_var.set(report.message)
+
+        if not report.candidates:
+            self._manual_fallback_guide(query, report.message.replace("OCR：", "", 1))
+            if show_zero_message or report.status in {"engine_unavailable", "grid_not_found", "capture_failed", "recognition_failed"}:
+                title = "OCR 狀態"
                 messagebox.showinfo(
-                    "改用人工選取",
-                    "目前無法使用 OCR（可能尚未校正結果區、Windows OCR 不可用或截圖辨識失敗）。\n\n"
-                    "原本人工流程仍可正常使用。",
+                    title,
+                    report.message
+                    + "\n\n原本人工選取流程仍可正常使用。"
+                    + ("\n若目標不在目前畫面，可在安管手動捲動後按『重新 OCR 目前畫面』。" if report.status == "no_candidates" else ""),
                 )
             return False
 
-        if not candidates:
-            self._manual_fallback_guide(query, "目前可見範圍 0 筆候選，已回到人工模式。")
-            if show_zero_message:
-                messagebox.showinfo(
-                    "目前畫面 0 筆候選",
-                    "目前只辨識畫面可見範圍，沒有找到符合候選。\n\n"
-                    "若目標不在畫面，請在安管手動捲動後再按『重新 OCR 目前畫面』；"
-                    "也可以直接人工選取。",
-                )
-            return False
-
-        choice = self._choose_ocr_candidate(candidates)
+        self.guide_var.set(
+            f"{report.message}\n\n"
+            "⚠ 只分析目前畫面可見結果，不代表全部查詢結果。"
+            "單筆／多筆都必須由你確認後才會點擊。"
+        )
+        choice = self._choose_ocr_candidate(report.candidates)
         if choice is None:
             self._manual_fallback_guide(query, "你沒有確認 OCR 候選，程式沒有點擊任何列。")
             return False
@@ -178,12 +179,13 @@ class OcrCandidateApp(BaseApp):
             return False
 
         label = choice.name or choice.row_text
+        source_text = "已校正結果區" if report.source == "calibrated" else "自動定位結果表"
         self.guide_var.set(
-            f"已依你的確認點選 OCR 候選：{label}\n\n"
+            f"OCR（{source_text}）已依你的確認點選候選：{label}\n\n"
             "請先看安管畫面確認目前場所是否正確，再按『我已選好場所，產生場所紀錄表』。\n\n"
             "後續場所紀錄表 PDF①仍會顯示場所編號、名稱、地址，作為第二道人工核對。"
         )
-        self.status_var.set("OCR 候選已由你確認並點選；請核對安管畫面後繼續。")
+        self.status_var.set(f"OCR：候選已由你確認並點選（{source_text}）；請核對安管畫面後繼續。")
         return True
 
     def _choose_ocr_candidate(self, candidates: list[ResultCandidate]) -> ResultCandidate | None:
