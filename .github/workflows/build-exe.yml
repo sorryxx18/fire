@@ -3,6 +3,7 @@ name: build-windows-exe
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -33,6 +34,11 @@ jobs:
         shell: pwsh
         run: |
           python -c "from ankuan_config import DEFAULT_CONFIG, POINT_KEYS; assert all(k in DEFAULT_CONFIG['points'] for k in POINT_KEYS); assert DEFAULT_CONFIG['report']['inspection_history_count'] >= 1"
+
+      - name: Validate PDF export dialog detection
+        shell: pwsh
+        run: |
+          python -c "from ankuan_runtime import CalibratedAnKuanAutomation as C; assert C._looks_like_pdf_export_dialog('匯出到 PDF'); assert C._looks_like_pdf_export_dialog('Export to PDF'); assert not C._looks_like_pdf_export_dialog('預覽'); print('PDF export dialog matcher OK')"
 
       - name: Build Word template
         run: python template_builder.py
@@ -69,6 +75,7 @@ jobs:
           path: dist/ankuan_ui_probe.exe
 
       - name: Publish release assets
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
