@@ -151,6 +151,7 @@ class OcrCandidateApp(BaseApp):
 
         if not report.candidates:
             self._manual_fallback_guide(query, report.message.replace("OCR：", "", 1))
+            self.status_var.set(report.message + "｜人工選取仍可使用。")
             if show_zero_message or report.status in {"engine_unavailable", "grid_not_found", "capture_failed", "recognition_failed"}:
                 title = "OCR 狀態"
                 messagebox.showinfo(
