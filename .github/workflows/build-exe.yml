@@ -30,10 +30,12 @@ jobs:
         run: |
           python -c "import ctypes; from ankuan_runtime import INPUT; s=ctypes.sizeof(INPUT); print('INPUT size=', s); assert s == 40, s"
 
-      - name: Validate config/profile defaults
+      - name: Validate embedded config defaults
         shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
-          python -c "from ankuan_config import DEFAULT_CONFIG, POINT_KEYS; assert all(k in DEFAULT_CONFIG['points'] for k in POINT_KEYS); assert DEFAULT_CONFIG['report']['inspection_history_count'] >= 1; assert DEFAULT_CONFIG['ocr']['click_x_ratio'] > 0"
+          python -c "from ankuan_config import DEFAULT_CONFIG, POINT_KEYS; assert all(k in DEFAULT_CONFIG['points'] for k in POINT_KEYS); assert DEFAULT_CONFIG['report']['inspection_history_count'] >= 1; assert DEFAULT_CONFIG['ocr']['click_x_ratio'] > 0; assert DEFAULT_CONFIG['points']['place_name']['x'] == 0.175781; assert DEFAULT_CONFIG['points']['preview_pdf_button']['scope'] == 'preview'; print('embedded standard calibration OK')"
 
       - name: Validate OCR matching rules
         shell: pwsh
@@ -57,7 +59,7 @@ jobs:
         shell: cmd
         run: >-
           python -m PyInstaller --noconfirm --clean --onefile --windowed
-          --name "消防安全表自動產製工具_v0.4.2-test_OCR狀態-PDF匯出修正"
+          --name "消防安全表自動產製工具_v0.4.2-test2_內建校正_OCR狀態-PDF匯出修正"
           --add-data "resources\template.docx;resources"
           --collect-all pywinauto
           --collect-all winocr
@@ -75,8 +77,8 @@ jobs:
       - name: Upload main app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 消防安全表自動產製工具_v0.4.2-test_OCR狀態-PDF匯出修正
-          path: dist/消防安全表自動產製工具_v0.4.2-test_OCR狀態-PDF匯出修正.exe
+          name: 消防安全表自動產製工具_v0.4.2-test2_內建校正_OCR狀態-PDF匯出修正
+          path: dist/消防安全表自動產製工具_v0.4.2-test2_內建校正_OCR狀態-PDF匯出修正.exe
 
       - name: Upload UI probe artifact
         uses: actions/upload-artifact@v4
@@ -91,7 +93,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: v0.4.1
         run: |
-          $main = "dist/消防安全表自動產製工具_v0.4.2-test_OCR狀態-PDF匯出修正.exe"
+          $main = "dist/消防安全表自動產製工具_v0.4.2-test2_內建校正_OCR狀態-PDF匯出修正.exe"
           $releaseMain = "dist/fire_tool.exe"
           $probe = "dist/ankuan_ui_probe.exe"
           Copy-Item $main $releaseMain -Force
