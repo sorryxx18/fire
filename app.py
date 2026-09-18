@@ -29,7 +29,8 @@ from parser import (
 )
 from word_writer import default_output_path, fill_word_template, roc_date
 
-APP_TITLE = "消防安全管理及應變表自動產製工具"
+APP_TITLE = "消防安全管理及應變表自動產製工具 v0.4.2 TEST"
+BUILD_NOTE = "v0.4.2-test｜OCR 狀態可視化｜PDF 匯出修正"
 
 # scope=ankuan: relative to the main AnKuan window
 # scope=preview: relative to the report preview window
@@ -135,6 +136,7 @@ class App(tk.Tk):
         root.pack(fill="both", expand=True)
 
         ttk.Label(root, text=APP_TITLE, font=("Microsoft JhengHei UI", 17, "bold")).pack(anchor="w")
+        ttk.Label(root, text=BUILD_NOTE, foreground="#7a4f00").pack(anchor="w", pady=(2, 0))
         ttk.Label(
             root,
             text=(
