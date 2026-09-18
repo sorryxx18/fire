@@ -12,16 +12,16 @@ if errorlevel 1 goto :fail
 
 echo [3/3] Building single Windows EXE...
 py -m PyInstaller --noconfirm --clean --onefile --windowed ^
-  --name "消防安全表自動產製工具_v0.4.2-test2_內建校正_OCR狀態-PDF匯出修正" ^
+  --name "消防安全表自動產製工具_v0.4.2-test3_桌面PDF_內建校正_OCR狀態-PDF匯出修正" ^
   --add-data "resources\template.docx;resources" ^
   --collect-all pywinauto ^
   --collect-all winocr ^
   --collect-all winrt ^
-  app_ocr.py
+  app_test3.py
 if errorlevel 1 goto :fail
 
 echo.
-echo Done: dist\消防安全表自動產製工具_v0.4.2-test2_內建校正_OCR狀態-PDF匯出修正.exe
+echo Done: dist\消防安全表自動產製工具_v0.4.2-test3_桌面PDF_內建校正_OCR狀態-PDF匯出修正.exe
 pause
 exit /b 0
 
