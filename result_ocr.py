@@ -53,6 +53,14 @@ class ResultCandidate:
         return self.row_text
 
 
+@dataclass
+class OcrScanReport:
+    candidates: list[ResultCandidate]
+    status: str
+    message: str
+    source: str = ""
+
+
 def ocr_available() -> bool:
     try:
         import winocr  # noqa: F401
@@ -338,41 +346,68 @@ def _safe_click_x(automation, left: int, right: int) -> int:
     return left + int((right - left) * ratio)
 
 
-def find_result_candidates(
-    automation,
-    query: str,
-    lang: str = "zh-Hant",
-    minimum_score: float = 0.58,
-    max_candidates: int = 12,
-) -> list[ResultCandidate] | None:
-    """Return matching rows in the still-visible query result grid.
+def _capture_window(automation):
+    """Capture the visible AnKuan window for automatic result-grid detection."""
+    try:
+        rect = automation.get_scope_rect("ankuan")
+    except Exception:
+        rect = None
+    if not rect:
+        return None, None
+    left, top, right, bottom = int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
+    if right - left < 100 or bottom - top < 100:
+        return None, None
+    try:
+        from PIL import ImageGrab
+        image = ImageGrab.grab(bbox=(left, top, right, bottom))
+    except Exception:
+        return None, None
+    return image, (left, top, right, bottom)
 
-    ``None`` means OCR could not run at all. ``[]`` means OCR ran but no visible
-    row matched.  Both states are intentional manual fallbacks; this function
-    never scrolls, never clicks, and never treats the visible viewport as the
-    complete query result set.
-    """
-    if not ocr_available():
-        return None
-    image, rect = _capture_grid(automation)
-    if image is None or rect is None:
-        return None
 
+def _recognize(image, lang: str):
     try:
         from winocr import recognize_pil_sync
-        result = recognize_pil_sync(image, lang)
+        return recognize_pil_sync(image, lang)
     except Exception:
         return None
 
-    query = (query or "").strip()
-    if not query:
-        return None
 
-    words = list(_iter_words(result))
-    rows = _cluster_rows(words, expected_row_height=_expected_row_height_px(automation))
-    left, top, right, _bottom = rect
-    click_x = _safe_click_x(automation, left, right)
+def _row_text(row: list[OcrWord]) -> str:
+    return " ".join(word.text for word in sorted(row, key=lambda w: w.x) if word.text.strip())
 
+
+def _find_result_header(rows: list[list[OcrWord]]) -> int | None:
+    """Find a visible result-grid header using multiple independent labels."""
+    expected = ("場所編號", "場所名稱", "場所地址", "列管狀況", "最新更新日期")
+    for idx, row in enumerate(rows):
+        compact = _normalize(_row_text(row))
+        hits = sum(_normalize(label) in compact for label in expected)
+        if hits >= 2:
+            return idx
+    return None
+
+
+def _auto_header_click_x(automation, header_row: list[OcrWord], left: int, right: int) -> int:
+    """Prefer the visible 場所名稱 column; otherwise use configured safe X."""
+    for word in header_row:
+        token = _normalize(word.text)
+        if "名稱" in token or "場所名稱" in token:
+            return left + int(round(word.x + word.width / 2.0))
+    return _safe_click_x(automation, left, right)
+
+
+def _build_candidates_from_rows(
+    automation,
+    rows: list[list[OcrWord]],
+    *,
+    query: str,
+    origin_left: int,
+    origin_top: int,
+    click_x: int,
+    minimum_score: float,
+    max_candidates: int,
+) -> list[ResultCandidate]:
     candidates: list[ResultCandidate] = []
     for row_index, row in enumerate(rows):
         if not row:
@@ -392,7 +427,7 @@ def find_result_candidates(
                 row_text=row_text,
                 row_center_y=center_y,
                 x=click_x,
-                y=top + int(round(center_y)),
+                y=origin_top + int(round(center_y)),
                 place_no=place_no,
                 name=name,
                 address=address,
@@ -403,3 +438,140 @@ def find_result_candidates(
 
     candidates.sort(key=lambda candidate: (-candidate.match_score, candidate.row_center_y))
     return candidates[:max_candidates]
+
+
+def scan_result_candidates(
+    automation,
+    query: str,
+    lang: str = "zh-Hant",
+    minimum_score: float = 0.58,
+    max_candidates: int = 12,
+) -> OcrScanReport:
+    """OCR the currently visible query results and explain what happened.
+
+    Priority:
+    1. Use the user's calibrated result-grid rectangle when present.
+    2. If it is not calibrated, OCR the visible AnKuan window and locate the
+       result table by recognising at least two header labels.
+    3. If reliable auto-location fails, return a visible status and keep the
+       existing manual-selection flow.  Nothing scrolls or clicks here.
+    """
+    query = (query or "").strip()
+    if not query:
+        return OcrScanReport([], "invalid_query", "OCR：查詢文字為空，已改用人工選取。")
+
+    if not ocr_available():
+        return OcrScanReport([], "engine_unavailable", "OCR：本機 Windows OCR 元件不可用，已改用人工選取。")
+
+    calibrated = _grid_rect(automation)
+    if calibrated:
+        image, rect = _capture_grid(automation)
+        if image is None or rect is None:
+            return OcrScanReport([], "capture_failed", "OCR：已校正結果區，但畫面擷取失敗，已改用人工選取。", "calibrated")
+        result = _recognize(image, lang)
+        if result is None:
+            return OcrScanReport([], "recognition_failed", "OCR：Windows OCR 辨識失敗，已改用人工選取。", "calibrated")
+        words = list(_iter_words(result))
+        rows = _cluster_rows(words, expected_row_height=_expected_row_height_px(automation))
+        left, top, right, _bottom = rect
+        candidates = _build_candidates_from_rows(
+            automation,
+            rows,
+            query=query,
+            origin_left=left,
+            origin_top=top,
+            click_x=_safe_click_x(automation, left, right),
+            minimum_score=minimum_score,
+            max_candidates=max_candidates,
+        )
+        if candidates:
+            return OcrScanReport(
+                candidates,
+                "candidates",
+                f"OCR：使用已校正結果區，找到 {len(candidates)} 筆目前可見候選。",
+                "calibrated",
+            )
+        return OcrScanReport([], "no_candidates", "OCR：已辨識已校正結果區，目前可見範圍 0 筆候選。", "calibrated")
+
+    # No calibration: attempt a conservative, visible-header auto-location.
+    image, window_rect = _capture_window(automation)
+    if image is None or window_rect is None:
+        return OcrScanReport([], "capture_failed", "OCR：無法擷取安管視窗，已改用人工選取。", "auto")
+
+    result = _recognize(image, lang)
+    if result is None:
+        return OcrScanReport([], "recognition_failed", "OCR：Windows OCR 辨識失敗，已改用人工選取。", "auto")
+
+    words = list(_iter_words(result))
+    rows = _cluster_rows(words, expected_row_height=_expected_row_height_px(automation))
+    header_idx = _find_result_header(rows)
+    if header_idx is None:
+        return OcrScanReport(
+            [],
+            "grid_not_found",
+            "OCR：尚未校正查詢結果範圍，且自動找不到可靠的結果表頭。可人工選取，或只校正結果區左上／右下兩點。",
+            "auto",
+        )
+
+    left, top, right, bottom = window_rect
+    header_row = rows[header_idx]
+    header_center = sum(word.center_y for word in header_row) / max(1, len(header_row))
+    window_height = max(1, bottom - top)
+
+    # Keep only visible rows below the detected header and above the bottom
+    # status/navigation area.  This prevents the query input itself from being
+    # mistaken for a result row when no grid calibration exists.
+    usable_bottom = window_height * 0.92
+    data_rows = []
+    for row in rows[header_idx + 1 :]:
+        if not row:
+            continue
+        center = sum(word.center_y for word in row) / len(row)
+        if center <= header_center or center >= usable_bottom:
+            continue
+        data_rows.append(row)
+
+    click_x = _auto_header_click_x(automation, header_row, left, right)
+    candidates = _build_candidates_from_rows(
+        automation,
+        data_rows,
+        query=query,
+        origin_left=left,
+        origin_top=top,
+        click_x=click_x,
+        minimum_score=minimum_score,
+        max_candidates=max_candidates,
+    )
+    if candidates:
+        return OcrScanReport(
+            candidates,
+            "candidates",
+            f"OCR：自動定位目前畫面的結果表，找到 {len(candidates)} 筆可見候選。",
+            "auto",
+        )
+    return OcrScanReport(
+        [],
+        "no_candidates",
+        "OCR：已自動定位結果表，但目前可見範圍 0 筆候選；可手動捲動後重新辨識。",
+        "auto",
+    )
+
+
+def find_result_candidates(
+    automation,
+    query: str,
+    lang: str = "zh-Hant",
+    minimum_score: float = 0.58,
+    max_candidates: int = 12,
+) -> list[ResultCandidate] | None:
+    """Backward-compatible candidate-only API."""
+    report = scan_result_candidates(
+        automation,
+        query,
+        lang=lang,
+        minimum_score=minimum_score,
+        max_candidates=max_candidates,
+    )
+    if report.status in {"engine_unavailable", "capture_failed", "recognition_failed", "grid_not_found", "invalid_query"}:
+        return None
+    return report.candidates
