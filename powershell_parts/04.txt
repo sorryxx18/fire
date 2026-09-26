@@ -1,0 +1,684 @@
+
+            )
+        ) {
+
+            (
+                [System.Windows.Automation.InvokePattern]$invokePattern
+            ).Invoke()
+
+            return
+        }
+
+
+        # ========================================================
+        # Delphi TevButton 實測沒有 InvokePattern
+        #
+        # 因此：
+        # 先透過 UIA 精確找到「這顆控制項」
+        # 再使用這顆控制項自己的即時 BoundingRectangle。
+        #
+        # 不是固定座標。
+        # 不是比例座標。
+        # ========================================================
+
+        $rect =
+            $Element.Current.BoundingRectangle
+
+
+        if (
+            $rect.Width -le 0 -or
+            $rect.Height -le 0
+        ) {
+
+            throw (
+                "控制項沒有 InvokePattern，且 BoundingRectangle 無效：" +
+                $Element.Current.Name
+            )
+        }
+
+
+        $x =
+            [int][Math]::Round(
+                $rect.Left +
+                ($rect.Width / 2)
+            )
+
+
+        $y =
+            [int][Math]::Round(
+                $rect.Top +
+                ($rect.Height / 2)
+            )
+
+
+        [TFDStep11Preview]::ClickPoint(
+            $x,
+            $y
+        )
+    }
+
+
+    # ============================================================
+    # MAIN
+    # ============================================================
+
+    try {
+
+        Write-Host ""
+        Write-Host "============================================" -ForegroundColor Cyan
+        Write-Host "STEP 11：開啟場所紀錄表預覽" -ForegroundColor Cyan
+        Write-Host "============================================" -ForegroundColor Cyan
+
+
+        # ========================================================
+        # 1. TFDSafeCln
+        # ========================================================
+
+        $proc =
+            Get-Process TFDSafeCln |
+            Select-Object -First 1
+
+
+        if (
+            $null -eq
+            $proc
+        ) {
+            throw "找不到 TFDSafeCln.exe"
+        }
+
+
+        $pidNow =
+            $proc.Id
+
+
+        Write-Host "PID=$pidNow"
+
+
+        # ========================================================
+        # 2. 找 STEP 10 留下的場所紀錄表設定視窗
+        # ========================================================
+
+        $dialogH =
+            Wait-Class `
+                -ProcessId $pidNow `
+                -ClassName "TSBMCheckPrintDialog" `
+                -TimeoutSec 10
+
+
+        Write-Host (
+            "1. ✓ 找到場所紀錄表設定視窗"
+        ) -ForegroundColor Green
+
+
+        # ========================================================
+        # 3. 重新 FromHandle
+        # ========================================================
+
+        $dialog =
+            [System.Windows.Automation.AutomationElement]::FromHandle(
+                $dialogH
+            )
+
+
+        if (
+            $null -eq
+            $dialog
+        ) {
+            throw "無法建立 TSBMCheckPrintDialog 的 UIA Element"
+        }
+
+
+        # ========================================================
+        # 4. 找「確 認 」
+        #
+        # 實測：
+        # Name='確 認 '
+        # Class='TevButton'
+        #
+        # 因為 Name 內有空格，所以使用 Normalize 比對。
+        # ========================================================
+
+        $confirm =
+            Find-NormalizedElement `
+                -Root $dialog `
+                -Name "確認" `
+                -ClassName "TevButton"
+
+
+        if (
+            $null -eq
+            $confirm
+        ) {
+            throw "找不到 TevButton『確 認 』"
+        }
+
+
+        Write-Host (
+            "2. ✓ 找到確認：Name='{0}' Class='{1}'" -f
+            $confirm.Current.Name,
+            $confirm.Current.ClassName
+        ) -ForegroundColor Green
+
+
+        # ========================================================
+        # 5. 前景化設定視窗
+        # ========================================================
+
+        [TFDStep11Preview]::SetForegroundWindow(
+            $dialogH
+        ) | Out-Null
+
+
+        Start-Sleep -Milliseconds 200
+
+
+        # ========================================================
+        # 6. 按「確認」
+        # ========================================================
+
+        Invoke-IdentifiedElement `
+            -Element $confirm
+
+
+        Write-Host (
+            "3. ✓ 已按『確認』"
+        ) -ForegroundColor Green
+
+
+        # ========================================================
+        # 7. 等待 FastReport Preview
+        # ========================================================
+
+        $previewH =
+            Wait-Class `
+                -ProcessId $pidNow `
+                -ClassName "TfrxPreviewForm" `
+                -TimeoutSec 30 `
+                -VisibleOnly
+
+
+        if (
+            $previewH -eq
+            [IntPtr]::Zero
+        ) {
+            throw "TfrxPreviewForm 未出現"
+        }
+
+
+        Write-Host (
+            "4. ✓ TfrxPreviewForm 已出現"
+        ) -ForegroundColor Green
+
+
+        # ========================================================
+        # 8. 再驗證一次 Preview 仍存在
+        # ========================================================
+
+        Start-Sleep -Milliseconds 300
+
+
+        $previewCheck =
+            [TFDStep11Preview]::FindVisibleByClassPid(
+                "TfrxPreviewForm",
+                $pidNow
+            )
+
+
+        if (
+            $previewCheck -eq
+            [IntPtr]::Zero
+        ) {
+            throw "TfrxPreviewForm 曾出現，但驗證時已消失"
+        }
+
+
+        # ========================================================
+        # STEP 11 END
+        # ========================================================
+
+        Write-Host ""
+        Write-Host "============================================" -ForegroundColor Green
+        Write-Host "★ STEP 11 成功" -ForegroundColor Green
+        Write-Host "場所紀錄表預覽已開啟。" -ForegroundColor Green
+        Write-Host "TfrxPreviewForm 已確認存在。" -ForegroundColor Green
+        Write-Host "本步尚未操作 PDF 匯出。" -ForegroundColor Green
+        Write-Host "============================================" -ForegroundColor Green
+    }
+
+
+    catch {
+
+        Write-Host ""
+        Write-Host "============================================" -ForegroundColor Red
+        Write-Host "STEP 11 中止" -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        Write-Host "============================================" -ForegroundColor Red
+
+        Write-Host ""
+        Write-Host $_.InvocationInfo.PositionMessage -ForegroundColor Yellow
+
+        throw   # 一鍵版：讓整個流程停下來
+    }
+}
+
+# ============================================================
+# STEP 12：開啟 PDF 匯出設定
+# ============================================================
+$Steps['12'] = {
+    # ============================================================
+    # STEP 12 V3
+    # 開啟 PDF 匯出設定
+    #
+    # 起點：
+    # STEP 11 已完成
+    # TfrxPreviewForm 報表預覽仍開啟
+    #
+    # 本版：
+    # 1. TB_GETITEMRECT 使用 TFDSafeCln 遠端記憶體
+    # 2. 避免 COMCTL32.dll Access violation
+    # 3. 點擊後同時判斷：
+    #       A. TfrxPDFExportDialog 直接出現
+    #       B. #32768 Popup Menu 出現
+    # 4. 詳列 Toolbar / Item 座標供除錯
+    #
+    # 目前測試：
+    # PDF 候選按鈕 = Toolbar Item Index 4
+    #
+    # 終點：
+    # TfrxPDFExportDialog 已出現
+    #
+    # 尚未處理：
+    # PDF Dialog「確定」
+    # 另存新檔
+    # ============================================================
+
+    Add-Type -AssemblyName System.Windows.Forms
+
+    if (-not ("TFDStep12RemoteV3" -as [type])) {
+
+        Add-Type @"
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+public static class TFDStep12RemoteV3
+{
+    public delegate bool EnumWindowsProc(
+        IntPtr hWnd,
+        IntPtr lParam
+    );
+
+    // ============================================================
+    // CONSTANTS
+    // ============================================================
+
+    public const uint WM_USER = 0x0400;
+
+    public const uint TB_BUTTONCOUNT =
+        WM_USER + 24;
+
+    public const uint TB_GETITEMRECT =
+        WM_USER + 29;
+
+
+    public const uint PROCESS_VM_OPERATION =
+        0x0008;
+
+    public const uint PROCESS_VM_READ =
+        0x0010;
+
+    public const uint PROCESS_VM_WRITE =
+        0x0020;
+
+    public const uint PROCESS_QUERY_INFORMATION =
+        0x0400;
+
+
+    public const uint MEM_COMMIT =
+        0x1000;
+
+    public const uint MEM_RESERVE =
+        0x2000;
+
+    public const uint MEM_RELEASE =
+        0x8000;
+
+    public const uint PAGE_READWRITE =
+        0x04;
+
+
+    public const uint MOUSEEVENTF_LEFTDOWN =
+        0x0002;
+
+    public const uint MOUSEEVENTF_LEFTUP =
+        0x0004;
+
+
+    // ============================================================
+    // STRUCTS
+    // ============================================================
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
+
+    // ============================================================
+    // USER32
+    // ============================================================
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(
+        EnumWindowsProc lpEnumFunc,
+        IntPtr lParam
+    );
+
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumChildWindows(
+        IntPtr hWndParent,
+        EnumWindowsProc lpEnumFunc,
+        IntPtr lParam
+    );
+
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(
+        IntPtr hWnd,
+        out uint lpdwProcessId
+    );
+
+
+    [DllImport(
+        "user32.dll",
+        CharSet=CharSet.Unicode
+    )]
+    public static extern int GetClassName(
+        IntPtr hWnd,
+        StringBuilder lpClassName,
+        int nMaxCount
+    );
+
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(
+        IntPtr hWnd
+    );
+
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(
+        IntPtr hWnd
+    );
+
+
+    [DllImport("user32.dll")]
+    public static extern bool ClientToScreen(
+        IntPtr hWnd,
+        ref POINT lpPoint
+    );
+
+
+    [DllImport("user32.dll")]
+    public static extern bool SetCursorPos(
+        int X,
+        int Y
+    );
+
+
+    [DllImport("user32.dll")]
+    public static extern bool GetCursorPos(
+        out POINT lpPoint
+    );
+
+
+    [DllImport("user32.dll")]
+    public static extern void mouse_event(
+        uint dwFlags,
+        uint dx,
+        uint dy,
+        uint dwData,
+        UIntPtr dwExtraInfo
+    );
+
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessage(
+        IntPtr hWnd,
+        uint Msg,
+        IntPtr wParam,
+        IntPtr lParam
+    );
+
+
+    // ============================================================
+    // KERNEL32
+    // ============================================================
+
+    [DllImport(
+        "kernel32.dll",
+        SetLastError=true
+    )]
+    public static extern IntPtr OpenProcess(
+        uint dwDesiredAccess,
+        bool bInheritHandle,
+        int dwProcessId
+    );
+
+
+    [DllImport(
+        "kernel32.dll",
+        SetLastError=true
+    )]
+    public static extern IntPtr VirtualAllocEx(
+        IntPtr hProcess,
+        IntPtr lpAddress,
+        UIntPtr dwSize,
+        uint flAllocationType,
+        uint flProtect
+    );
+
+
+    [DllImport(
+        "kernel32.dll",
+        SetLastError=true
+    )]
+    public static extern bool ReadProcessMemory(
+        IntPtr hProcess,
+        IntPtr lpBaseAddress,
+        byte[] lpBuffer,
+        int dwSize,
+        out IntPtr lpNumberOfBytesRead
+    );
+
+
+    [DllImport(
+        "kernel32.dll",
+        SetLastError=true
+    )]
+    public static extern bool VirtualFreeEx(
+        IntPtr hProcess,
+        IntPtr lpAddress,
+        UIntPtr dwSize,
+        uint dwFreeType
+    );
+
+
+    [DllImport(
+        "kernel32.dll",
+        SetLastError=true
+    )]
+    public static extern bool CloseHandle(
+        IntPtr hObject
+    );
+
+
+    // ============================================================
+    // WINDOW HELPERS
+    // ============================================================
+
+    public static string ClassName(
+        IntPtr hWnd
+    )
+    {
+        if (hWnd == IntPtr.Zero)
+            return "";
+
+        StringBuilder sb =
+            new StringBuilder(256);
+
+        GetClassName(
+            hWnd,
+            sb,
+            sb.Capacity
+        );
+
+        return sb.ToString();
+    }
+
+
+    public static int PID(
+        IntPtr hWnd
+    )
+    {
+        uint pid;
+
+        GetWindowThreadProcessId(
+            hWnd,
+            out pid
+        );
+
+        return (int)pid;
+    }
+
+
+    public static IntPtr FindVisibleTopLevel(
+        string className,
+        int targetPid
+    )
+    {
+        IntPtr result =
+            IntPtr.Zero;
+
+        EnumWindows(
+            delegate(
+                IntPtr hWnd,
+                IntPtr lParam
+            )
+            {
+                if (
+                    IsWindowVisible(hWnd) &&
+                    PID(hWnd) == targetPid &&
+                    ClassName(hWnd) == className
+                )
+                {
+                    result = hWnd;
+
+                    return false;
+                }
+
+                return true;
+            },
+            IntPtr.Zero
+        );
+
+        return result;
+    }
+
+
+    public static IntPtr FindVisibleTopLevelAnyPid(
+        string className
+    )
+    {
+        IntPtr result =
+            IntPtr.Zero;
+
+        EnumWindows(
+            delegate(
+                IntPtr hWnd,
+                IntPtr lParam
+            )
+            {
+                if (
+                    IsWindowVisible(hWnd) &&
+                    ClassName(hWnd) == className
+                )
+                {
+                    result = hWnd;
+
+                    return false;
+                }
+
+                return true;
+            },
+            IntPtr.Zero
+        );
+
+        return result;
+    }
+
+
+    public static IntPtr[] FindVisibleChildrenByClass(
+        IntPtr parent,
+        string className
+    )
+    {
+        List<IntPtr> result =
+            new List<IntPtr>();
+
+        EnumChildWindows(
+            parent,
+            delegate(
+                IntPtr hWnd,
+                IntPtr lParam
+            )
+            {
+                if (
+                    IsWindowVisible(hWnd) &&
+                    ClassName(hWnd) == className
+                )
+                {
+                    result.Add(hWnd);
+                }
+
+                return true;
+            },
+            IntPtr.Zero
+        );
+
+        return result.ToArray();
+    }
+
+
+    // ============================================================
+    // TOOLBAR
+    // ============================================================
+
+    public static int ButtonCount(
+        IntPtr toolbar
+    )
+    {
+        return (int)SendMessage(
+            toolbar,
+            TB_BUTTONCOUNT,
+            IntPtr.Zero,
+            IntPtr.Zero
+        );
+    }
+
+
+    // ============================================================
+    // REMOTE TB_GETITEMRECT
+    // ============================================================
+
+    public static bool GetRemoteItemRect(
+        IntPtr toolbar,
+        int targetPid,
+        int index,
+        out int left,
+        out int top,
+        out i
