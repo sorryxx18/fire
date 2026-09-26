@@ -1,0 +1,592 @@
+# STEP 9：開啟場所紀錄表
+# ============================================================
+$Steps['9'] = {
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+
+    if (-not ("TFDStep9" -as [type])) {
+        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class TFDStep9
+{
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetCursorPos(int X, int Y);
+
+    [DllImport("user32.dll")]
+    public static extern void mouse_event(
+        uint flags,
+        uint dx,
+        uint dy,
+        uint data,
+        UIntPtr extraInfo
+    );
+}
+"@
+    }
+
+    $ErrorActionPreference = "Stop"
+
+    function Norm([string]$s) {
+        if ($null -eq $s) { return "" }
+        return (($s -replace "\s","").Trim())
+    }
+
+    try {
+
+        Write-Host ""
+        Write-Host "========== STEP 9 ==========" -ForegroundColor Cyan
+
+        $pidNow =
+            (Get-Process TFDSafeCln | Select-Object -First 1).Id
+
+        $desktop =
+            [System.Windows.Automation.AutomationElement]::RootElement
+
+        $pidCond =
+            New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+                $pidNow
+            )
+
+        # =====================================================
+        # 1. 找目前可見的「場所紀錄表」
+        # =====================================================
+
+        $all =
+            $desktop.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                $pidCond
+            )
+
+        $button = $null
+
+        for ($i=0; $i -lt $all.Count; $i++) {
+
+            $e = $all.Item($i)
+
+            try {
+
+                if (
+                    $e.Current.ClassName -eq "TevButton" -and
+                    (Norm $e.Current.Name) -eq (Norm "場所紀錄表") -and
+                    -not $e.Current.IsOffscreen
+                ) {
+                    $button = $e
+                    break
+                }
+
+            }
+            catch {}
+        }
+
+        if ($null -eq $button) {
+            throw "找不到目前可見的『場所紀錄表』按鈕"
+        }
+
+        $br =
+            $button.Current.BoundingRectangle
+
+        Write-Host (
+            "1. ✓ 找到場所紀錄表 Rect={0},{1},{2},{3}" -f
+            [int]$br.Left,
+            [int]$br.Top,
+            [int]$br.Width,
+            [int]$br.Height
+        ) -ForegroundColor Green
+
+        # =====================================================
+        # 2. 優先 Invoke
+        # =====================================================
+
+        $invoked = $false
+
+        try {
+
+            $invoke =
+                $button.GetCurrentPattern(
+                    [System.Windows.Automation.InvokePattern]::Pattern
+                )
+
+            if ($null -ne $invoke) {
+
+                $invoke.Invoke()
+
+                $invoked = $true
+
+                Write-Host "2. ✓ Invoke 場所紀錄表" -ForegroundColor Green
+            }
+
+        }
+        catch {}
+
+        # =====================================================
+        # 3. Invoke 不行才用目前按鈕矩形中央點擊
+        # =====================================================
+
+        if (-not $invoked) {
+
+            $x =
+                [int](
+                    $br.Left +
+                    $br.Width / 2
+                )
+
+            $y =
+                [int](
+                    $br.Top +
+                    $br.Height / 2
+                )
+
+            [TFDStep9]::SetCursorPos(
+                $x,$y
+            ) | Out-Null
+
+            Start-Sleep -Milliseconds 80
+
+            [TFDStep9]::mouse_event(
+                0x0002,0,0,0,[UIntPtr]::Zero
+            )
+
+            Start-Sleep -Milliseconds 60
+
+            [TFDStep9]::mouse_event(
+                0x0004,0,0,0,[UIntPtr]::Zero
+            )
+
+            Write-Host "2. ✓ 已點擊場所紀錄表" -ForegroundColor Green
+        }
+
+        # =====================================================
+        # 4. 等待 TSBMCheckPrintDialog
+        # =====================================================
+
+        $dialog = $null
+
+        $sw =
+            [Diagnostics.Stopwatch]::StartNew()
+
+        while ($sw.Elapsed.TotalSeconds -lt 10) {
+
+            $all2 =
+                $desktop.FindAll(
+                    [System.Windows.Automation.TreeScope]::Descendants,
+                    $pidCond
+                )
+
+            for ($i=0; $i -lt $all2.Count; $i++) {
+
+                $e =
+                    $all2.Item($i)
+
+                try {
+
+                    if (
+                        $e.Current.ClassName -eq
+                        "TSBMCheckPrintDialog"
+                    ) {
+                        $dialog = $e
+                        break
+                    }
+
+                }
+                catch {}
+            }
+
+            if ($null -ne $dialog) {
+                break
+            }
+
+            Start-Sleep -Milliseconds 150
+        }
+
+        if ($null -eq $dialog) {
+            throw "10 秒內未出現 TSBMCheckPrintDialog"
+        }
+
+        $dr =
+            $dialog.Current.BoundingRectangle
+
+        Write-Host (
+            "3. ✓ 找到 TSBMCheckPrintDialog Rect={0},{1},{2},{3}" -f
+            [int]$dr.Left,
+            [int]$dr.Top,
+            [int]$dr.Width,
+            [int]$dr.Height
+        ) -ForegroundColor Green
+
+        # =====================================================
+        # 5. 只列出 SpinEdit，不修改
+        # =====================================================
+
+        $spins =
+            $dialog.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                (New-Object System.Windows.Automation.PropertyCondition(
+                    [System.Windows.Automation.AutomationElement]::ClassNameProperty,
+                    "TevSpinEdit"
+                ))
+            )
+
+        Write-Host ""
+        Write-Host "TevSpinEdit 數量 = $($spins.Count)"
+
+        for ($i=0; $i -lt $spins.Count; $i++) {
+
+            $s =
+                $spins.Item($i)
+
+            $r =
+                $s.Current.BoundingRectangle
+
+            $value = ""
+
+            try {
+
+                $vp =
+                    $s.GetCurrentPattern(
+                        [System.Windows.Automation.ValuePattern]::Pattern
+                    )
+
+                $value =
+                    $vp.Current.Value
+            }
+            catch {}
+
+            Write-Host (
+                "Spin[{0}] Y={1} Value='{2}'" -f
+                $i,
+                [int]$r.Top,
+                $value
+            )
+        }
+
+        Write-Host ""
+        Write-Host "==========================================" -ForegroundColor Green
+        Write-Host "★ STEP 9 成功" -ForegroundColor Green
+        Write-Host "『場所紀錄表』已開啟。" -ForegroundColor Green
+        Write-Host "TSBMCheckPrintDialog 已確認存在。" -ForegroundColor Green
+        Write-Host "本步尚未修改 5／2。" -ForegroundColor Green
+        Write-Host "==========================================" -ForegroundColor Green
+    }
+    catch {
+
+        Write-Host ""
+        Write-Host "========== STEP 9 中止 ==========" -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        Write-Host ""
+        Write-Host $_.InvocationInfo.PositionMessage -ForegroundColor Yellow
+
+        throw   # 一鍵版：讓整個流程停下來
+    }
+}
+
+# ============================================================
+# STEP 10：設定最近檢查／最近申報
+# ============================================================
+$Steps['10'] = {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+
+    if (-not ("TFDStep10Original" -as [type])) {
+        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class TFDStep10Original
+{
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetCursorPos(int X, int Y);
+
+    [DllImport("user32.dll")]
+    public static extern void mouse_event(
+        uint dwFlags,
+        uint dx,
+        uint dy,
+        uint dwData,
+        UIntPtr dwExtraInfo
+    );
+
+    public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP   = 0x0004;
+}
+"@
+    }
+
+    $ErrorActionPreference = "Stop"
+
+    function Normalize-Text {
+        param([string]$Text)
+
+        if ($null -eq $Text) {
+            return ""
+        }
+
+        return (($Text -replace "\s","").Trim())
+    }
+
+    function Send-Key {
+        param(
+            [string]$Keys,
+            [int]$DelayMs = 100
+        )
+
+        [System.Windows.Forms.SendKeys]::SendWait($Keys)
+        Start-Sleep -Milliseconds $DelayMs
+    }
+
+    function Set-ClipboardSafe {
+        param([string]$Text)
+
+        for ($i=0; $i -lt 5; $i++) {
+
+            try {
+                Set-Clipboard -Value $Text
+                return
+            }
+            catch {
+                Start-Sleep -Milliseconds 80
+            }
+        }
+
+        throw "無法寫入剪貼簿。"
+    }
+
+    function Get-ClipboardSafe {
+
+        for ($i=0; $i -lt 5; $i++) {
+
+            try {
+                return (Get-Clipboard -Raw)
+            }
+            catch {
+                Start-Sleep -Milliseconds 80
+            }
+        }
+
+        return ""
+    }
+
+    function Click-ScreenPoint {
+        param(
+            [int]$X,
+            [int]$Y
+        )
+
+        [TFDStep10Original]::SetCursorPos(
+            $X,
+            $Y
+        ) | Out-Null
+
+        Start-Sleep -Milliseconds 50
+
+        [TFDStep10Original]::mouse_event(
+            [TFDStep10Original]::MOUSEEVENTF_LEFTDOWN,
+            0,0,0,
+            [UIntPtr]::Zero
+        )
+
+        Start-Sleep -Milliseconds 30
+
+        [TFDStep10Original]::mouse_event(
+            [TFDStep10Original]::MOUSEEVENTF_LEFTUP,
+            0,0,0,
+            [UIntPtr]::Zero
+        )
+
+        Start-Sleep -Milliseconds 120
+    }
+
+    function Click-ElementCenter {
+        param(
+            [System.Windows.Automation.AutomationElement]$Element
+        )
+
+        $r =
+            $Element.Current.BoundingRectangle
+
+        if (
+            $r.Width -le 0 -or
+            $r.Height -le 0
+        ) {
+            throw "控制項 BoundingRectangle 無效。"
+        }
+
+        $x =
+            [int][Math]::Round(
+                $r.Left +
+                ($r.Width / 2.0)
+            )
+
+        $y =
+            [int][Math]::Round(
+                $r.Top +
+                ($r.Height / 2.0)
+            )
+
+        Click-ScreenPoint -X $x -Y $y
+    }
+
+    function Find-DescendantByClass {
+        param(
+            [System.Windows.Automation.AutomationElement]$Root,
+            [string]$ClassName
+        )
+
+        return $Root.FindFirst(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::ClassNameProperty,
+                $ClassName
+            ))
+        )
+    }
+
+    function Find-DescendantsByClass {
+        param(
+            [System.Windows.Automation.AutomationElement]$Root,
+            [string]$ClassName
+        )
+
+        $found =
+            $Root.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                (New-Object System.Windows.Automation.PropertyCondition(
+                    [System.Windows.Automation.AutomationElement]::ClassNameProperty,
+                    $ClassName
+                ))
+            )
+
+        $result = @()
+
+        for ($i=0; $i -lt $found.Count; $i++) {
+            $result += $found.Item($i)
+        }
+
+        return @($result)
+    }
+
+    function Copy-FocusedControl {
+        param([int]$DelayMs = 180)
+
+        Set-ClipboardSafe -Text "__TFD_EMPTY__"
+
+        Send-Key -Keys "^c" -DelayMs $DelayMs
+
+        $text =
+            Get-ClipboardSafe
+
+        if ($text -eq "__TFD_EMPTY__") {
+            return ""
+        }
+
+        return $text
+    }
+
+    function Paste-IntoFocusedControl {
+        param([string]$Text)
+
+        Set-ClipboardSafe -Text $Text
+
+        Send-Key -Keys "^a" -DelayMs 60
+        Send-Key -Keys "^v" -DelayMs 120
+    }
+
+    function Set-TextByClickAndVerify {
+        param(
+            [System.Windows.Automation.AutomationElement]$Element,
+            [string]$Value,
+            [int]$Retry = 3
+        )
+
+        for ($try=1; $try -le $Retry; $try++) {
+
+            Write-Host (
+                "    嘗試 {0}/{1}..." -f
+                $try,
+                $Retry
+            )
+
+            Click-ElementCenter $Element
+
+            Paste-IntoFocusedControl -Text $Value
+
+            Send-Key -Keys "^a" -DelayMs 50
+
+            $readBack =
+                Copy-FocusedControl -DelayMs 100
+
+            Write-Host (
+                "    讀回 = '{0}'" -f
+                $readBack
+            )
+
+            if (
+                (Normalize-Text $readBack) -eq
+                (Normalize-Text $Value)
+            ) {
+                return $true
+            }
+
+            Start-Sleep -Milliseconds 120
+        }
+
+        return $false
+    }
+
+    function Set-SpinEditValue {
+        param(
+            [System.Windows.Automation.AutomationElement]$SpinEdit,
+            [string]$Value
+        )
+
+        $inner =
+            Find-DescendantByClass `
+                -Root $SpinEdit `
+                -ClassName "TcxCustomInnerTextEdit"
+
+        if ($null -eq $inner) {
+            throw "TevSpinEdit 內找不到 TcxCustomInnerTextEdit。"
+        }
+
+        $ir =
+            $inner.Current.BoundingRectangle
+
+        Write-Host (
+            "    Inner Rect={0},{1},{2},{3}" -f
+            [int]$ir.Left,
+            [int]$ir.Top,
+            [int]$ir.Width,
+            [int]$ir.Height
+        )
+
+        if (
+            -not (
+                Set-TextByClickAndVerify `
+                    -Element $inner `
+                    -Value $Value
+            )
+        ) {
+            throw "SpinEdit 設定 '$Value' 並反向 Ctrl+C 驗證失敗。"
+        }
+    }
+
+    try {
+
+        Write-Host ""
+        Write-Host "========== STEP 10：原 V4 方法 ==========" -ForegroundColor Cyan
+
+        $pidNow =
+            (Get-Process TFDSafeCln |
+             Select-Object -First 1).Id
+
+        $desktop =
+            [System.Windows.Automation.AutomationElement]:
