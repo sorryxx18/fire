@@ -1,0 +1,722 @@
+rent.ClassName,
+                        $e.Current.IsEnabled
+                    )
+                }
+            }
+
+            catch {}
+        }
+
+
+        if (
+            $buttons.Count -eq 0
+        ) {
+            Write-Host (
+                "  UIA 未列出 Button，稍後使用 Enter 備援。"
+            ) -ForegroundColor Yellow
+        }
+
+
+        # ========================================================
+        # 5. 找「確定 / OK」
+        #
+        # 不假定實際文字一定是其中哪一種。
+        # ========================================================
+
+        $okButton =
+            $null
+
+
+        foreach (
+            $b in
+            $buttons
+        ) {
+
+            try {
+
+                $n =
+                    Norm $b.Current.Name
+
+
+                if (
+                    $n -eq "確定" -or
+                    $n -eq "確認" -or
+                    $n -eq "OK" -or
+                    $n -eq "Ok" -or
+                    $n -eq "ok"
+                ) {
+
+                    $okButton =
+                        $b
+
+                    break
+                }
+            }
+
+            catch {}
+        }
+
+
+        # ========================================================
+        # 6. 記錄按下前現有的 #32770
+        # ========================================================
+
+        $beforeDialogs =
+            @(
+                [TFDStep13]::VisibleWindowsByPid(
+                    $pidNow
+                ) |
+                Where-Object {
+                    [TFDStep13]::ClassName($_) -eq
+                    "#32770"
+                }
+            )
+
+
+        Write-Host ""
+
+        Write-Host (
+            "按下前 #32770 數量 = $($beforeDialogs.Count)"
+        )
+
+
+        # ========================================================
+        # 7. 按 PDF Export 的「確定」
+        # ========================================================
+
+        if (
+            $null -ne
+            $okButton
+        ) {
+
+            Write-Host (
+                "2. ✓ 找到確定按鈕：Name='{0}' Class='{1}'" -f
+                $okButton.Current.Name,
+                $okButton.Current.ClassName
+            ) -ForegroundColor Green
+
+
+            Click-UIAElement `
+                -Element $okButton
+
+
+            Write-Host (
+                "3. ✓ 已操作確定按鈕"
+            ) -ForegroundColor Green
+        }
+
+        else {
+
+            # ====================================================
+            # UIA 找不到時：
+            # FastReport Export Dialog 預設按鈕通常可用 Enter。
+            #
+            # 只在確定視窗目前仍在前景時執行。
+            # ====================================================
+
+            Write-Host (
+                "2. 找不到可辨識的『確定/OK』按鈕，使用 Enter 備援。"
+            ) -ForegroundColor Yellow
+
+
+            [TFDStep13]::SetForegroundWindow(
+                $pdfH
+            ) | Out-Null
+
+
+            Start-Sleep `
+                -Milliseconds 200
+
+
+            [System.Windows.Forms.SendKeys]::SendWait(
+                "{ENTER}"
+            )
+
+
+            Write-Host (
+                "3. ✓ 已送出 Enter"
+            ) -ForegroundColor Green
+        }
+
+
+        # ========================================================
+        # 8. 等 Windows Save As Dialog
+        #
+        # Windows 傳統 Common Dialog：
+        # Class = #32770
+        #
+        # 不直接假定標題一定叫「另存新檔」，
+        # 同時比對：
+        # - 新出現的 #32770
+        # - Title 含「另存」
+        # - Title 含 Save
+        # ========================================================
+
+        $saveH =
+            [IntPtr]::Zero
+
+
+        $sw =
+            [Diagnostics.Stopwatch]::StartNew()
+
+
+        while (
+            $sw.Elapsed.TotalSeconds -lt
+            15
+        ) {
+
+            Start-Sleep `
+                -Milliseconds 100
+
+
+            $windows =
+                @(
+                    [TFDStep13]::VisibleWindowsByPid(
+                        $pidNow
+                    )
+                )
+
+
+            foreach (
+                $h in
+                $windows
+            ) {
+
+                $class =
+                    [TFDStep13]::ClassName(
+                        $h
+                    )
+
+
+                if (
+                    $class -ne
+                    "#32770"
+                ) {
+                    continue
+                }
+
+
+                $title =
+                    [TFDStep13]::WindowText(
+                        $h
+                    )
+
+
+                $wasThereBefore =
+                    $beforeDialogs -contains
+                    $h
+
+
+                if (
+                    -not $wasThereBefore -or
+                    $title -match "另存" -or
+                    $title -match "Save"
+                ) {
+
+                    $saveH =
+                        $h
+
+                    break
+                }
+            }
+
+
+            if (
+                $saveH -ne
+                [IntPtr]::Zero
+            ) {
+                break
+            }
+        }
+
+
+        # ========================================================
+        # 9. 驗證
+        # ========================================================
+
+        if (
+            $saveH -eq
+            [IntPtr]::Zero
+        ) {
+
+            Write-Host ""
+            Write-Host "目前 TFDSafeCln 可見頂層視窗：" -ForegroundColor Yellow
+
+
+            $windows =
+                @(
+                    [TFDStep13]::VisibleWindowsByPid(
+                        $pidNow
+                    )
+                )
+
+
+            foreach (
+                $h in
+                $windows
+            ) {
+
+                Write-Host (
+                    "  HWND={0} Class='{1}' Title='{2}'" -f
+                    $h,
+                    [TFDStep13]::ClassName($h),
+                    [TFDStep13]::WindowText($h)
+                )
+            }
+
+
+            throw (
+                "按下 PDF 確定後，15 秒內找不到新的『另存新檔』視窗"
+            )
+        }
+
+
+        $saveClass =
+            [TFDStep13]::ClassName(
+                $saveH
+            )
+
+
+        $saveTitle =
+            [TFDStep13]::WindowText(
+                $saveH
+            )
+
+
+        Write-Host ""
+
+        Write-Host (
+            "4. ✓ 找到另存視窗 HWND=$saveH"
+        ) -ForegroundColor Green
+
+
+        Write-Host (
+            "   Class='$saveClass'"
+        ) -ForegroundColor Green
+
+
+        Write-Host (
+            "   Title='$saveTitle'"
+        ) -ForegroundColor Green
+
+
+        # ========================================================
+        # 10. 前景化 Save As
+        # ========================================================
+
+        [TFDStep13]::SetForegroundWindow(
+            $saveH
+        ) | Out-Null
+
+
+        Start-Sleep `
+            -Milliseconds 200
+
+
+        # ========================================================
+        # STEP 13 END
+        # ========================================================
+
+        Write-Host ""
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Green
+
+
+        Write-Host `
+            "★ STEP 13 成功" `
+            -ForegroundColor Green
+
+
+        Write-Host `
+            "PDF 匯出設定已確認。" `
+            -ForegroundColor Green
+
+
+        Write-Host `
+            "『另存新檔』視窗已出現。" `
+            -ForegroundColor Green
+
+
+        Write-Host `
+            "目前尚未輸入檔名，也尚未儲存。" `
+            -ForegroundColor Green
+
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Green
+    }
+
+
+    catch {
+
+        Write-Host ""
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Red
+
+
+        Write-Host `
+            "STEP 13 中止" `
+            -ForegroundColor Red
+
+
+        Write-Host `
+            $_.Exception.Message `
+            -ForegroundColor Red
+
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Red
+
+
+        Write-Host ""
+
+
+        Write-Host `
+            $_.InvocationInfo.PositionMessage `
+            -ForegroundColor Yellow
+
+        throw   # 一鍵版：讓整個流程停下來
+    }
+}
+
+# ============================================================
+# STEP 14：儲存場所紀錄表 PDF
+# ============================================================
+$Steps['14'] = {
+    # ============================================================
+    # STEP 14 V2：另存 PDF
+    #
+    # 起點：
+    # STEP 13 已完成
+    # Windows「另存新檔」視窗目前開啟
+    #
+    # 流程：
+    # 1. 找「另存新檔」
+    # 2. Alt+N → 檔案名稱
+    # 3. Ctrl+A
+    # 4. 貼上完整 PDF 路徑
+    # 5. Alt+S → 存檔
+    # 6. 等另存新檔關閉
+    # 7. Test-Path 確認 PDF 存在
+    # 8. 驗證檔案大小 > 0
+    # 9. 驗證 PDF Header = %PDF-
+    #
+    # 輸出：
+    # Desktop\場所紀錄表_yyyyMMdd_HHmmss.pdf
+    # ============================================================
+
+
+    # ============================================================
+    # Assemblies
+    # ============================================================
+
+    Add-Type -AssemblyName System.Windows.Forms
+
+
+    # ============================================================
+    # Win32 Helper
+    # ============================================================
+
+    if (-not ("TFDStep14V2" -as [type])) {
+
+        Add-Type @"
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+public static class TFDStep14V2
+{
+    public delegate bool EnumWindowsProc(
+        IntPtr hWnd,
+        IntPtr lParam
+    );
+
+
+    // ============================================================
+    // EnumWindows
+    // ============================================================
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(
+        EnumWindowsProc lpEnumFunc,
+        IntPtr lParam
+    );
+
+
+    // ============================================================
+    // PID
+    // ============================================================
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(
+        IntPtr hWnd,
+        out uint lpdwProcessId
+    );
+
+
+    // ============================================================
+    // ClassName
+    // ============================================================
+
+    [DllImport(
+        "user32.dll",
+        CharSet=CharSet.Unicode
+    )]
+    public static extern int GetClassName(
+        IntPtr hWnd,
+        StringBuilder lpClassName,
+        int nMaxCount
+    );
+
+
+    // ============================================================
+    // Window title
+    // ============================================================
+
+    [DllImport(
+        "user32.dll",
+        CharSet=CharSet.Unicode
+    )]
+    public static extern int GetWindowText(
+        IntPtr hWnd,
+        StringBuilder lpString,
+        int nMaxCount
+    );
+
+
+    // ============================================================
+    // Window state
+    // ============================================================
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(
+        IntPtr hWnd
+    );
+
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindow(
+        IntPtr hWnd
+    );
+
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(
+        IntPtr hWnd
+    );
+
+
+    // ============================================================
+    // Helper：取得 PID
+    // ============================================================
+
+    public static int PID(
+        IntPtr hWnd
+    )
+    {
+        uint pid;
+
+        GetWindowThreadProcessId(
+            hWnd,
+            out pid
+        );
+
+        return (int)pid;
+    }
+
+
+    // ============================================================
+    // Helper：取得 ClassName
+    // ============================================================
+
+    public static string ClassName(
+        IntPtr hWnd
+    )
+    {
+        if (
+            hWnd ==
+            IntPtr.Zero
+        )
+        {
+            return "";
+        }
+
+
+        StringBuilder sb =
+            new StringBuilder(256);
+
+
+        GetClassName(
+            hWnd,
+            sb,
+            sb.Capacity
+        );
+
+
+        return sb.ToString();
+    }
+
+
+    // ============================================================
+    // Helper：取得 Title
+    // ============================================================
+
+    public static string WindowText(
+        IntPtr hWnd
+    )
+    {
+        if (
+            hWnd ==
+            IntPtr.Zero
+        )
+        {
+            return "";
+        }
+
+
+        StringBuilder sb =
+            new StringBuilder(512);
+
+
+        GetWindowText(
+            hWnd,
+            sb,
+            sb.Capacity
+        );
+
+
+        return sb.ToString();
+    }
+
+
+    // ============================================================
+    // 找 TFDSafeCln 的 Save As
+    //
+    // Class = #32770
+    // Title = 另存新檔 / Save...
+    // ============================================================
+
+    public static IntPtr FindSaveDialog(
+        int targetPid
+    )
+    {
+        IntPtr result =
+            IntPtr.Zero;
+
+
+        EnumWindows(
+            delegate(
+                IntPtr hWnd,
+                IntPtr lParam
+            )
+            {
+                if (
+                    IsWindowVisible(hWnd) &&
+                    PID(hWnd) == targetPid &&
+                    ClassName(hWnd) == "#32770"
+                )
+                {
+                    string title =
+                        WindowText(hWnd);
+
+
+                    if (
+                        title.Contains("另存") ||
+                        title.Contains("Save")
+                    )
+                    {
+                        result =
+                            hWnd;
+
+
+                        return false;
+                    }
+                }
+
+
+                return true;
+            },
+            IntPtr.Zero
+        );
+
+
+        return result;
+    }
+}
+"@
+    }
+
+
+    # ============================================================
+    # PowerShell
+    # ============================================================
+
+    $ErrorActionPreference =
+        "Stop"
+
+
+    try {
+
+        Write-Host ""
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Cyan
+
+
+        Write-Host `
+            "STEP 14 V2：另存 PDF" `
+            -ForegroundColor Cyan
+
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Cyan
+
+
+
+        # ========================================================
+        # 1. 準備輸出資料夾
+        #
+        # 使用目前 Windows 帳號 Desktop
+        #
+        # 你的電腦目前會得到：
+        # D:\Users\TFD\Desktop
+        # ========================================================
+
+        $saveDir =
+            [Environment]::GetFolderPath(
+                "Desktop"
+            )
+
+
+        if (
+            [string]::IsNullOrWhiteSpace(
+                $saveDir
+            )
+        )
+        {
+            throw (
+                "無法取得 Desktop 路徑"
+            )
+        }
+
+
+        if (
+            -not
+            (
+                Test-Path `
+                    -LiteralPath $saveDir `
+                    -PathType Container
+            )
+        )
+        {
+            throw (
+                "Desktop 路徑不存在：$saveD
