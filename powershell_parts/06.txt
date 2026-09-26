@@ -1,0 +1,727 @@
+Sleep `
+                -Milliseconds 80
+        }
+
+
+        # ========================================================
+        # 10A. Dialog 直接出現
+        # ========================================================
+
+        if (
+            $pdfDialogH -ne
+            [IntPtr]::Zero
+        ) {
+
+            Write-Host (
+                "4. ✓ 點擊後直接出現 TfrxPDFExportDialog"
+            ) -ForegroundColor Green
+
+
+            Write-Host (
+                "   HWND=$pdfDialogH"
+            ) -ForegroundColor Green
+        }
+
+
+        # ========================================================
+        # 10B. Popup Menu
+        # ========================================================
+
+        elseif (
+            $menuH -ne
+            [IntPtr]::Zero
+        ) {
+
+            Write-Host (
+                "4. ✓ PDF Popup Menu 已出現 HWND=$menuH"
+            ) -ForegroundColor Green
+
+
+            Start-Sleep `
+                -Milliseconds 200
+
+
+            [System.Windows.Forms.SendKeys]::SendWait(
+                "{ENTER}"
+            )
+
+
+            Write-Host (
+                "5. ✓ 已送 Enter 選取目前第一項"
+            ) -ForegroundColor Green
+
+
+            $pdfDialogH =
+                Wait-VisibleClass `
+                    -ProcessId $pidNow `
+                    -ClassName "TfrxPDFExportDialog" `
+                    -TimeoutSec 10
+
+
+            if (
+                $pdfDialogH -eq
+                [IntPtr]::Zero
+            ) {
+                throw (
+                    "Popup Menu 有出現，但 Enter 後找不到 TfrxPDFExportDialog"
+                )
+            }
+
+
+            Write-Host (
+                "6. ✓ TfrxPDFExportDialog 已出現 HWND=$pdfDialogH"
+            ) -ForegroundColor Green
+        }
+
+
+        # ========================================================
+        # 10C. 都沒有
+        # ========================================================
+
+        else {
+
+            Write-Host ""
+
+            Write-Host (
+                "點擊後 3 秒內："
+            ) -ForegroundColor Yellow
+
+
+            Write-Host (
+                " - 未找到 TfrxPDFExportDialog"
+            ) -ForegroundColor Yellow
+
+
+            Write-Host (
+                " - 未找到 TFDSafeCln 所屬 #32768"
+            ) -ForegroundColor Yellow
+
+
+            $anyMenu =
+                [TFDStep12RemoteV3]::FindVisibleTopLevelAnyPid(
+                    "#32768"
+                )
+
+
+            if (
+                $anyMenu -ne
+                [IntPtr]::Zero
+            ) {
+
+                $menuPid =
+                    [TFDStep12RemoteV3]::PID(
+                        $anyMenu
+                    )
+
+
+                Write-Host (
+                    "但系統有其他 #32768：HWND={0} PID={1}" -f
+                    $anyMenu,
+                    $menuPid
+                ) -ForegroundColor Yellow
+            }
+
+
+            throw (
+                "Item[4] 點擊後沒有出現 PDF Dialog，也沒有出現安管的 Popup Menu。"
+            )
+        }
+
+
+        # ========================================================
+        # 11. 最終確認
+        # ========================================================
+
+        Start-Sleep `
+            -Milliseconds 300
+
+
+        $pdfCheck =
+            [TFDStep12RemoteV3]::FindVisibleTopLevel(
+                "TfrxPDFExportDialog",
+                $pidNow
+            )
+
+
+        if (
+            $pdfCheck -eq
+            [IntPtr]::Zero
+        ) {
+            throw (
+                "TfrxPDFExportDialog 曾出現，但最終驗證時已消失"
+            )
+        }
+
+
+        # ========================================================
+        # STEP 12 END
+        # ========================================================
+
+        Write-Host ""
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Green
+
+
+        Write-Host `
+            "★ STEP 12 成功" `
+            -ForegroundColor Green
+
+
+        Write-Host `
+            "TfrxPDFExportDialog 已確認存在。" `
+            -ForegroundColor Green
+
+
+        Write-Host `
+            "目前停在 PDF 匯出設定畫面。" `
+            -ForegroundColor Green
+
+
+        Write-Host `
+            "尚未按『確定』，尚未另存 PDF。" `
+            -ForegroundColor Green
+
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Green
+    }
+
+
+    catch {
+
+        Write-Host ""
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Red
+
+
+        Write-Host `
+            "STEP 12 中止" `
+            -ForegroundColor Red
+
+
+        Write-Host `
+            $_.Exception.Message `
+            -ForegroundColor Red
+
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Red
+
+
+        Write-Host ""
+
+
+        Write-Host `
+            $_.InvocationInfo.PositionMessage `
+            -ForegroundColor Yellow
+
+        throw   # 一鍵版：讓整個流程停下來
+    }
+}
+
+# ============================================================
+# STEP 13：PDF 設定確定 → 另存新檔
+# ============================================================
+$Steps['13'] = {
+    # ============================================================
+    # STEP 13
+    # PDF 匯出設定 → 確定 → 開啟「另存新檔」
+    #
+    # 起點：
+    # STEP 12 已完成
+    # TfrxPDFExportDialog 已開啟
+    #
+    # 終點：
+    # Windows「另存新檔」Dialog 已出現
+    #
+    # 本 STEP 尚不處理：
+    # 檔名
+    # 儲存路徑
+    # 真正按「儲存」
+    # ============================================================
+
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+    Add-Type -AssemblyName System.Windows.Forms
+
+    if (-not ("TFDStep13" -as [type])) {
+
+        Add-Type @"
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+public static class TFDStep13
+{
+    public delegate bool EnumWindowsProc(
+        IntPtr hWnd,
+        IntPtr lParam
+    );
+
+    public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP   = 0x0004;
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(
+        EnumWindowsProc lpEnumFunc,
+        IntPtr lParam
+    );
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(
+        IntPtr hWnd,
+        out uint lpdwProcessId
+    );
+
+    [DllImport(
+        "user32.dll",
+        CharSet=CharSet.Unicode
+    )]
+    public static extern int GetClassName(
+        IntPtr hWnd,
+        StringBuilder lpClassName,
+        int nMaxCount
+    );
+
+    [DllImport(
+        "user32.dll",
+        CharSet=CharSet.Unicode
+    )]
+    public static extern int GetWindowText(
+        IntPtr hWnd,
+        StringBuilder lpString,
+        int nMaxCount
+    );
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(
+        IntPtr hWnd
+    );
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(
+        IntPtr hWnd
+    );
+
+    [DllImport("user32.dll")]
+    public static extern bool SetCursorPos(
+        int X,
+        int Y
+    );
+
+    [DllImport("user32.dll")]
+    public static extern void mouse_event(
+        uint dwFlags,
+        uint dx,
+        uint dy,
+        uint dwData,
+        UIntPtr dwExtraInfo
+    );
+
+    public static int PID(
+        IntPtr hWnd
+    )
+    {
+        uint pid;
+
+        GetWindowThreadProcessId(
+            hWnd,
+            out pid
+        );
+
+        return (int)pid;
+    }
+
+    public static string ClassName(
+        IntPtr hWnd
+    )
+    {
+        StringBuilder sb =
+            new StringBuilder(256);
+
+        GetClassName(
+            hWnd,
+            sb,
+            sb.Capacity
+        );
+
+        return sb.ToString();
+    }
+
+    public static string WindowText(
+        IntPtr hWnd
+    )
+    {
+        StringBuilder sb =
+            new StringBuilder(512);
+
+        GetWindowText(
+            hWnd,
+            sb,
+            sb.Capacity
+        );
+
+        return sb.ToString();
+    }
+
+    public static IntPtr FindVisibleByClassPid(
+        string className,
+        int targetPid
+    )
+    {
+        IntPtr result =
+            IntPtr.Zero;
+
+        EnumWindows(
+            delegate(
+                IntPtr hWnd,
+                IntPtr lParam
+            )
+            {
+                if (
+                    IsWindowVisible(hWnd) &&
+                    PID(hWnd) == targetPid &&
+                    ClassName(hWnd) == className
+                )
+                {
+                    result = hWnd;
+                    return false;
+                }
+
+                return true;
+            },
+            IntPtr.Zero
+        );
+
+        return result;
+    }
+
+    public static IntPtr[] VisibleWindowsByPid(
+        int targetPid
+    )
+    {
+        List<IntPtr> result =
+            new List<IntPtr>();
+
+        EnumWindows(
+            delegate(
+                IntPtr hWnd,
+                IntPtr lParam
+            )
+            {
+                if (
+                    IsWindowVisible(hWnd) &&
+                    PID(hWnd) == targetPid
+                )
+                {
+                    result.Add(hWnd);
+                }
+
+                return true;
+            },
+            IntPtr.Zero
+        );
+
+        return result.ToArray();
+    }
+
+    public static void RealClick(
+        int x,
+        int y
+    )
+    {
+        SetCursorPos(
+            x,
+            y
+        );
+
+        System.Threading.Thread.Sleep(100);
+
+        mouse_event(
+            MOUSEEVENTF_LEFTDOWN,
+            0,
+            0,
+            0,
+            UIntPtr.Zero
+        );
+
+        System.Threading.Thread.Sleep(50);
+
+        mouse_event(
+            MOUSEEVENTF_LEFTUP,
+            0,
+            0,
+            0,
+            UIntPtr.Zero
+        );
+    }
+}
+"@
+    }
+
+    $ErrorActionPreference =
+        "Stop"
+
+
+    # ============================================================
+    # Helpers
+    # ============================================================
+
+    function Norm {
+        param(
+            [string]$Text
+        )
+
+        if (
+            $null -eq
+            $Text
+        ) {
+            return ""
+        }
+
+        return (
+            (
+                $Text `
+                -replace "\s+", "" `
+                -replace "&", ""
+            ).Trim()
+        )
+    }
+
+
+    function Click-UIAElement {
+
+        param(
+            [System.Windows.Automation.AutomationElement]$Element
+        )
+
+        if (
+            $null -eq
+            $Element
+        ) {
+            throw "Click-UIAElement 收到 null"
+        }
+
+        # ========================================================
+        # 第一優先：InvokePattern
+        # ========================================================
+
+        $pattern =
+            $null
+
+        if (
+            $Element.TryGetCurrentPattern(
+                [System.Windows.Automation.InvokePattern]::Pattern,
+                [ref]$pattern
+            )
+        ) {
+
+            (
+                [System.Windows.Automation.InvokePattern]$pattern
+            ).Invoke()
+
+            return
+        }
+
+
+        # ========================================================
+        # 第二優先：實體滑鼠點控制項中心
+        # ========================================================
+
+        $r =
+            $Element.Current.BoundingRectangle
+
+
+        if (
+            $r.Width -le 0 -or
+            $r.Height -le 0
+        ) {
+            throw (
+                "控制項無 InvokePattern，而且 BoundingRectangle 無效"
+            )
+        }
+
+
+        $x =
+            [int][Math]::Round(
+                $r.Left +
+                ($r.Width / 2)
+            )
+
+
+        $y =
+            [int][Math]::Round(
+                $r.Top +
+                ($r.Height / 2)
+            )
+
+
+        [TFDStep13]::RealClick(
+            $x,
+            $y
+        )
+    }
+
+
+    # ============================================================
+    # MAIN
+    # ============================================================
+
+    try {
+
+        Write-Host ""
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Cyan
+
+        Write-Host `
+            "STEP 13：PDF 確定 → 另存新檔" `
+            -ForegroundColor Cyan
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Cyan
+
+
+        # ========================================================
+        # 1. TFDSafeCln
+        # ========================================================
+
+        $proc =
+            Get-Process TFDSafeCln |
+            Select-Object -First 1
+
+
+        if (
+            $null -eq
+            $proc
+        ) {
+            throw "找不到 TFDSafeCln.exe"
+        }
+
+
+        $pidNow =
+            $proc.Id
+
+
+        Write-Host (
+            "PID=$pidNow"
+        )
+
+
+        # ========================================================
+        # 2. 找 STEP 12 留下的 PDF Export Dialog
+        # ========================================================
+
+        $pdfH =
+            [TFDStep13]::FindVisibleByClassPid(
+                "TfrxPDFExportDialog",
+                $pidNow
+            )
+
+
+        if (
+            $pdfH -eq
+            [IntPtr]::Zero
+        ) {
+            throw (
+                "找不到 TfrxPDFExportDialog；請先完成 STEP 12"
+            )
+        }
+
+
+        Write-Host (
+            "1. ✓ 找到 TfrxPDFExportDialog HWND=$pdfH"
+        ) -ForegroundColor Green
+
+
+        # ========================================================
+        # 3. 建立 UIA Element
+        # ========================================================
+
+        $pdfDialog =
+            [System.Windows.Automation.AutomationElement]::FromHandle(
+                $pdfH
+            )
+
+
+        if (
+            $null -eq
+            $pdfDialog
+        ) {
+            throw (
+                "無法建立 TfrxPDFExportDialog UIA Element"
+            )
+        }
+
+
+        [TFDStep13]::SetForegroundWindow(
+            $pdfH
+        ) | Out-Null
+
+
+        Start-Sleep `
+            -Milliseconds 300
+
+
+        # ========================================================
+        # 4. 列出 PDF Dialog 裡可看到的 Button
+        #
+        # 這次第一次跑會順便確認：
+        # Name
+        # Class
+        # ControlType
+        # ========================================================
+
+        $all =
+            $pdfDialog.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition
+            )
+
+
+        Write-Host ""
+        Write-Host "PDF Dialog 內按鈕：" -ForegroundColor Cyan
+
+
+        $buttons =
+            @()
+
+
+        for (
+            $i = 0;
+            $i -lt $all.Count;
+            $i++
+        ) {
+
+            $e =
+                $all.Item($i)
+
+
+            try {
+
+                $ct =
+                    $e.Current.ControlType
+
+
+                if (
+                    $ct -eq
+                    [System.Windows.Automation.ControlType]::Button
+                ) {
+
+                    $buttons +=
+                        $e
+
+
+                    Write-Host (
+                        "  Name='{0}' Class='{1}' Enabled={2}" -f
+                        $e.Current.Name,
+                        $e.Cur
