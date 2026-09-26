@@ -1,0 +1,750 @@
+nt right,
+        out int bottom
+    )
+    {
+        left = 0;
+        top = 0;
+        right = 0;
+        bottom = 0;
+
+        IntPtr processHandle =
+            IntPtr.Zero;
+
+        IntPtr remoteBuffer =
+            IntPtr.Zero;
+
+        try
+        {
+            uint rights =
+                PROCESS_VM_OPERATION |
+                PROCESS_VM_READ |
+                PROCESS_VM_WRITE |
+                PROCESS_QUERY_INFORMATION;
+
+
+            processHandle =
+                OpenProcess(
+                    rights,
+                    false,
+                    targetPid
+                );
+
+
+            if (
+                processHandle ==
+                IntPtr.Zero
+            )
+            {
+                return false;
+            }
+
+
+            remoteBuffer =
+                VirtualAllocEx(
+                    processHandle,
+                    IntPtr.Zero,
+                    (UIntPtr)16,
+                    MEM_COMMIT | MEM_RESERVE,
+                    PAGE_READWRITE
+                );
+
+
+            if (
+                remoteBuffer ==
+                IntPtr.Zero
+            )
+            {
+                return false;
+            }
+
+
+            IntPtr result =
+                SendMessage(
+                    toolbar,
+                    TB_GETITEMRECT,
+                    (IntPtr)index,
+                    remoteBuffer
+                );
+
+
+            if (
+                result ==
+                IntPtr.Zero
+            )
+            {
+                return false;
+            }
+
+
+            byte[] data =
+                new byte[16];
+
+
+            IntPtr bytesRead =
+                IntPtr.Zero;
+
+
+            bool readOK =
+                ReadProcessMemory(
+                    processHandle,
+                    remoteBuffer,
+                    data,
+                    data.Length,
+                    out bytesRead
+                );
+
+
+            if (!readOK)
+            {
+                return false;
+            }
+
+
+            if (
+                bytesRead.ToInt64() <
+                16
+            )
+            {
+                return false;
+            }
+
+
+            left =
+                BitConverter.ToInt32(
+                    data,
+                    0
+                );
+
+
+            top =
+                BitConverter.ToInt32(
+                    data,
+                    4
+                );
+
+
+            right =
+                BitConverter.ToInt32(
+                    data,
+                    8
+                );
+
+
+            bottom =
+                BitConverter.ToInt32(
+                    data,
+                    12
+                );
+
+
+            if (
+                right <= left ||
+                bottom <= top
+            )
+            {
+                return false;
+            }
+
+
+            return true;
+        }
+
+        finally
+        {
+            if (
+                remoteBuffer !=
+                IntPtr.Zero &&
+                processHandle !=
+                IntPtr.Zero
+            )
+            {
+                VirtualFreeEx(
+                    processHandle,
+                    remoteBuffer,
+                    UIntPtr.Zero,
+                    MEM_RELEASE
+                );
+            }
+
+
+            if (
+                processHandle !=
+                IntPtr.Zero
+            )
+            {
+                CloseHandle(
+                    processHandle
+                );
+            }
+        }
+    }
+
+
+    // ============================================================
+    // TOOLBAR ITEM CENTER -> SCREEN
+    // ============================================================
+
+    public static bool ItemCenterScreen(
+        IntPtr toolbar,
+        int targetPid,
+        int index,
+        out int x,
+        out int y
+    )
+    {
+        x = 0;
+        y = 0;
+
+        int left;
+        int top;
+        int right;
+        int bottom;
+
+
+        bool ok =
+            GetRemoteItemRect(
+                toolbar,
+                targetPid,
+                index,
+                out left,
+                out top,
+                out right,
+                out bottom
+            );
+
+
+        if (!ok)
+        {
+            return false;
+        }
+
+
+        POINT p =
+            new POINT();
+
+
+        p.X =
+            left +
+            ((right - left) / 2);
+
+
+        p.Y =
+            top +
+            ((bottom - top) / 2);
+
+
+        if (
+            !ClientToScreen(
+                toolbar,
+                ref p
+            )
+        )
+        {
+            return false;
+        }
+
+
+        x = p.X;
+        y = p.Y;
+
+        return true;
+    }
+
+
+    // ============================================================
+    // REAL MOUSE CLICK
+    // ============================================================
+
+    public static void RealClick(
+        int x,
+        int y
+    )
+    {
+        SetCursorPos(
+            x,
+            y
+        );
+
+
+        System.Threading.Thread.Sleep(
+            150
+        );
+
+
+        mouse_event(
+            MOUSEEVENTF_LEFTDOWN,
+            0,
+            0,
+            0,
+            UIntPtr.Zero
+        );
+
+
+        System.Threading.Thread.Sleep(
+            60
+        );
+
+
+        mouse_event(
+            MOUSEEVENTF_LEFTUP,
+            0,
+            0,
+            0,
+            UIntPtr.Zero
+        );
+    }
+}
+"@
+    }
+
+
+    # ============================================================
+    # POWERSHELL HELPERS
+    # ============================================================
+
+    $ErrorActionPreference =
+        "Stop"
+
+
+    function Wait-VisibleClass {
+
+        param(
+            [int]$ProcessId,
+
+            [string]$ClassName,
+
+            [int]$TimeoutSec = 10
+        )
+
+
+        $sw =
+            [Diagnostics.Stopwatch]::StartNew()
+
+
+        while (
+            $sw.Elapsed.TotalSeconds -lt
+            $TimeoutSec
+        ) {
+
+            $h =
+                [TFDStep12RemoteV3]::FindVisibleTopLevel(
+                    $ClassName,
+                    $ProcessId
+                )
+
+
+            if (
+                $h -ne
+                [IntPtr]::Zero
+            ) {
+                return $h
+            }
+
+
+            Start-Sleep `
+                -Milliseconds 100
+        }
+
+
+        return [IntPtr]::Zero
+    }
+
+
+    # ============================================================
+    # MAIN
+    # ============================================================
+
+    try {
+
+        Write-Host ""
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Cyan
+
+        Write-Host `
+            "STEP 12 V3：開啟 PDF 匯出設定" `
+            -ForegroundColor Cyan
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Cyan
+
+
+        # ========================================================
+        # 1. TFDSafeCln
+        # ========================================================
+
+        $proc =
+            Get-Process TFDSafeCln |
+            Select-Object -First 1
+
+
+        if (
+            $null -eq
+            $proc
+        ) {
+            throw "找不到 TFDSafeCln.exe"
+        }
+
+
+        $pidNow =
+            $proc.Id
+
+
+        Write-Host (
+            "PID = $pidNow"
+        )
+
+
+        # ========================================================
+        # 2. PDF Dialog 是否已存在
+        # ========================================================
+
+        $existingPdf =
+            [TFDStep12RemoteV3]::FindVisibleTopLevel(
+                "TfrxPDFExportDialog",
+                $pidNow
+            )
+
+
+        if (
+            $existingPdf -ne
+            [IntPtr]::Zero
+        ) {
+
+            Write-Host ""
+
+            Write-Host (
+                "★ TfrxPDFExportDialog 已經存在 HWND=$existingPdf"
+            ) -ForegroundColor Green
+
+            Write-Host (
+                "不再重複點 PDF。"
+            ) -ForegroundColor Green
+
+            return
+        }
+
+
+        # ========================================================
+        # 3. 找 Preview
+        # ========================================================
+
+        $previewH =
+            Wait-VisibleClass `
+                -ProcessId $pidNow `
+                -ClassName "TfrxPreviewForm" `
+                -TimeoutSec 10
+
+
+        if (
+            $previewH -eq
+            [IntPtr]::Zero
+        ) {
+            throw "找不到 TfrxPreviewForm"
+        }
+
+
+        Write-Host (
+            "1. ✓ 找到 TfrxPreviewForm HWND=$previewH"
+        ) -ForegroundColor Green
+
+
+        [TFDStep12RemoteV3]::SetForegroundWindow(
+            $previewH
+        ) | Out-Null
+
+
+        Start-Sleep `
+            -Milliseconds 300
+
+
+        # ========================================================
+        # 4. 找 TToolBar
+        # ========================================================
+
+        $toolbars =
+            @(
+                [TFDStep12RemoteV3]::FindVisibleChildrenByClass(
+                    $previewH,
+                    "TToolBar"
+                )
+            )
+
+
+        if (
+            $toolbars.Count -eq 0
+        ) {
+            throw "TfrxPreviewForm 內找不到 TToolBar"
+        }
+
+
+        Write-Host ""
+
+        Write-Host (
+            "找到 TToolBar 數量 = $($toolbars.Count)"
+        ) -ForegroundColor Cyan
+
+
+        # ========================================================
+        # 5. 列出 Toolbar Items
+        # ========================================================
+
+        $targetCandidates =
+            @()
+
+
+        for (
+            $i = 0;
+            $i -lt $toolbars.Count;
+            $i++
+        ) {
+
+            $tb =
+                $toolbars[$i]
+
+
+            $count =
+                [TFDStep12RemoteV3]::ButtonCount(
+                    $tb
+                )
+
+
+            Write-Host ""
+
+            Write-Host (
+                "--------------------------------------------"
+            )
+
+
+            Write-Host (
+                "Toolbar[{0}] HWND={1} ButtonCount={2}" -f
+                $i,
+                $tb,
+                $count
+            ) -ForegroundColor Yellow
+
+
+            if (
+                $count -le 0
+            ) {
+                continue
+            }
+
+
+            $max =
+                [Math]::Min(
+                    $count,
+                    40
+                )
+
+
+            for (
+                $j = 0;
+                $j -lt $max;
+                $j++
+            ) {
+
+                $itemX = 0
+                $itemY = 0
+
+
+                $itemOK =
+                    [TFDStep12RemoteV3]::ItemCenterScreen(
+                        $tb,
+                        $pidNow,
+                        $j,
+                        [ref]$itemX,
+                        [ref]$itemY
+                    )
+
+
+                Write-Host (
+                    "  Item[{0}] OK={1} Screen={2},{3}" -f
+                    $j,
+                    $itemOK,
+                    $itemX,
+                    $itemY
+                )
+
+
+                # =================================================
+                # 目前 PDF 候選 = Item[4]
+                # =================================================
+
+                if (
+                    $j -eq 4 -and
+                    $itemOK
+                ) {
+
+                    $targetCandidates +=
+                        [pscustomobject]@{
+
+                            ToolbarIndex =
+                                $i
+
+                            Toolbar =
+                                $tb
+
+                            ItemIndex =
+                                $j
+
+                            X =
+                                $itemX
+
+                            Y =
+                                $itemY
+
+                            ButtonCount =
+                                $count
+                        }
+                }
+            }
+        }
+
+
+        # ========================================================
+        # 6. 找 Item 4 候選
+        # ========================================================
+
+        if (
+            $targetCandidates.Count -eq 0
+        ) {
+            throw (
+                "沒有任何 Toolbar 的 Item[4] 可取得有效位置"
+            )
+        }
+
+
+        $target =
+            $targetCandidates |
+            Sort-Object Y, X |
+            Select-Object -First 1
+
+
+        Write-Host ""
+
+        Write-Host `
+            "============================================" `
+            -ForegroundColor Cyan
+
+
+        Write-Host (
+            "2. ✓ 選定 Toolbar[{0}] Item[{1}]" -f
+            $target.ToolbarIndex,
+            $target.ItemIndex
+        ) -ForegroundColor Green
+
+
+        Write-Host (
+            "   Toolbar HWND = {0}" -f
+            $target.Toolbar
+        ) -ForegroundColor Green
+
+
+        Write-Host (
+            "   ButtonCount = {0}" -f
+            $target.ButtonCount
+        ) -ForegroundColor Green
+
+
+        Write-Host (
+            "   Screen = {0},{1}" -f
+            $target.X,
+            $target.Y
+        ) -ForegroundColor Green
+
+
+        # ========================================================
+        # 7. Preview 再前景化
+        # ========================================================
+
+        [TFDStep12RemoteV3]::SetForegroundWindow(
+            $previewH
+        ) | Out-Null
+
+
+        Start-Sleep `
+            -Milliseconds 300
+
+
+        # ========================================================
+        # 8. 實體滑鼠點 Item 4
+        # ========================================================
+
+        [TFDStep12RemoteV3]::RealClick(
+            $target.X,
+            $target.Y
+        )
+
+
+        Write-Host ""
+
+        Write-Host (
+            "3. ✓ 已實體點擊 Toolbar Item[4]"
+        ) -ForegroundColor Green
+
+
+        # ========================================================
+        # 9. 判斷：
+        #
+        # A. TfrxPDFExportDialog 直接出現
+        # B. #32768 Popup Menu
+        # ========================================================
+
+        $pdfDialogH =
+            [IntPtr]::Zero
+
+        $menuH =
+            [IntPtr]::Zero
+
+
+        $sw =
+            [Diagnostics.Stopwatch]::StartNew()
+
+
+        while (
+            $sw.Elapsed.TotalSeconds -lt
+            3
+        ) {
+
+            # ----------------------------------------------------
+            # A. PDF Dialog
+            # ----------------------------------------------------
+
+            $pdfDialogH =
+                [TFDStep12RemoteV3]::FindVisibleTopLevel(
+                    "TfrxPDFExportDialog",
+                    $pidNow
+                )
+
+
+            if (
+                $pdfDialogH -ne
+                [IntPtr]::Zero
+            ) {
+                break
+            }
+
+
+            # ----------------------------------------------------
+            # B. Popup Menu
+            # ----------------------------------------------------
+
+            $menuH =
+                [TFDStep12RemoteV3]::FindVisibleTopLevel(
+                    "#32768",
+                    $pidNow
+                )
+
+
+            if (
+                $menuH -ne
+                [IntPtr]::Zero
+            ) {
+                break
+            }
+
+
+            Start-
