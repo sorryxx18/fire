@@ -1,0 +1,594 @@
+:RootElement
+
+        $pidCond =
+            New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+                $pidNow
+            )
+
+        # ======================================================
+        # 1. 找 TSBMCheckPrintDialog
+        # ======================================================
+
+        $all =
+            $desktop.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                $pidCond
+            )
+
+        $dialog = $null
+
+        for ($i=0; $i -lt $all.Count; $i++) {
+
+            $e =
+                $all.Item($i)
+
+            try {
+
+                if (
+                    $e.Current.ClassName -eq
+                    "TSBMCheckPrintDialog"
+                ) {
+                    $dialog = $e
+                    break
+                }
+
+            }
+            catch {}
+        }
+
+        if ($null -eq $dialog) {
+            throw "找不到 TSBMCheckPrintDialog。"
+        }
+
+        $dialogHwnd =
+            [IntPtr]$dialog.Current.NativeWindowHandle
+
+        if ($dialogHwnd -ne [IntPtr]::Zero) {
+
+            [TFDStep10Original]::SetForegroundWindow(
+                $dialogHwnd
+            ) | Out-Null
+
+            Start-Sleep -Milliseconds 250
+        }
+
+        Write-Host "1. ✓ 找到 TSBMCheckPrintDialog" -ForegroundColor Green
+
+        # ======================================================
+        # 2. 找兩個 TevSpinEdit，依 Y 由上至下排序
+        # ======================================================
+
+        $spins =
+            @(
+                Find-DescendantsByClass `
+                    -Root $dialog `
+                    -ClassName "TevSpinEdit" |
+                Sort-Object {
+                    try {
+                        $_.Current.BoundingRectangle.Top
+                    }
+                    catch {
+                        [double]::MaxValue
+                    }
+                }
+            )
+
+        if ($spins.Count -lt 2) {
+            throw "TSBMCheckPrintDialog 找不到兩個 TevSpinEdit。"
+        }
+
+        Write-Host ""
+        Write-Host "TevSpinEdit 數量 = $($spins.Count)"
+
+        for ($i=0; $i -lt $spins.Count; $i++) {
+
+            $r =
+                $spins[$i].Current.BoundingRectangle
+
+            $inner =
+                Find-DescendantByClass `
+                    -Root $spins[$i] `
+                    -ClassName "TcxCustomInnerTextEdit"
+
+            $innerFound =
+                ($null -ne $inner)
+
+            Write-Host (
+                "Spin[{0}] Y={1} InnerTextEdit={2}" -f
+                $i,
+                [int]$r.Top,
+                $innerFound
+            )
+        }
+
+        if ($spins.Count -ne 2) {
+            Write-Host "注意：目前超過 2 個 SpinEdit，只取最上面兩個。" -ForegroundColor Yellow
+        }
+
+        Write-Host ""
+        Write-Host "2. ✓ 已依 Y 排序" -ForegroundColor Green
+        Write-Host "上方 = 最近檢查"
+        Write-Host "下方 = 最近申報"
+
+        # ======================================================
+        # 3. 上方 = 最近檢查
+        # ======================================================
+
+        Write-Host ""
+        Write-Host "設定上方『最近檢查』= $($TFD.RecentCheck) ..." -ForegroundColor Cyan
+
+        Set-SpinEditValue `
+            -SpinEdit $spins[0] `
+            -Value $TFD.RecentCheck
+
+        Write-Host "3. ✓ 上方已驗證為 $($TFD.RecentCheck)" -ForegroundColor Green
+
+        # ======================================================
+        # 4. 下方 = 最近申報
+        # ======================================================
+
+        Write-Host ""
+        Write-Host "設定下方『最近申報』= $($TFD.RecentReport) ..." -ForegroundColor Cyan
+
+        Set-SpinEditValue `
+            -SpinEdit $spins[1] `
+            -Value $TFD.RecentReport
+
+        Write-Host "4. ✓ 下方已驗證為 $($TFD.RecentReport)" -ForegroundColor Green
+
+        # ======================================================
+        # 5. 最後再獨立反向驗證一次
+        # ======================================================
+
+        Write-Host ""
+        Write-Host "========== 最終驗證 ==========" -ForegroundColor Cyan
+
+        $all2 =
+            $desktop.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                $pidCond
+            )
+
+        $dialog2 = $null
+
+        for ($i=0; $i -lt $all2.Count; $i++) {
+
+            $e =
+                $all2.Item($i)
+
+            try {
+
+                if (
+                    $e.Current.ClassName -eq
+                    "TSBMCheckPrintDialog"
+                ) {
+                    $dialog2 = $e
+                    break
+                }
+
+            }
+            catch {}
+        }
+
+        if ($null -eq $dialog2) {
+            throw "最終驗證時找不到 TSBMCheckPrintDialog。"
+        }
+
+        $spins2 =
+            @(
+                Find-DescendantsByClass `
+                    -Root $dialog2 `
+                    -ClassName "TevSpinEdit" |
+                Sort-Object {
+                    try {
+                        $_.Current.BoundingRectangle.Top
+                    }
+                    catch {
+                        [double]::MaxValue
+                    }
+                }
+            )
+
+        if ($spins2.Count -lt 2) {
+            throw "最終驗證時找不到兩個 SpinEdit。"
+        }
+
+        $innerTop =
+            Find-DescendantByClass `
+                -Root $spins2[0] `
+                -ClassName "TcxCustomInnerTextEdit"
+
+        $innerBottom =
+            Find-DescendantByClass `
+                -Root $spins2[1] `
+                -ClassName "TcxCustomInnerTextEdit"
+
+        if (
+            $null -eq $innerTop -or
+            $null -eq $innerBottom
+        ) {
+            throw "最終驗證找不到 inner text edit。"
+        }
+
+        Click-ElementCenter $innerTop
+        Send-Key -Keys "^a" -DelayMs 50
+
+        $finalTop =
+            Copy-FocusedControl -DelayMs 100
+
+        Click-ElementCenter $innerBottom
+        Send-Key -Keys "^a" -DelayMs 50
+
+        $finalBottom =
+            Copy-FocusedControl -DelayMs 100
+
+        Write-Host ""
+        Write-Host "最終讀回："
+        Write-Host "上方 = '$finalTop'"
+        Write-Host "下方 = '$finalBottom'"
+
+        if (
+            (Normalize-Text $finalTop) -ne $TFD.RecentCheck -or
+            (Normalize-Text $finalBottom) -ne $TFD.RecentReport
+        ) {
+            throw "最終反向驗證不是 5 / 2。"
+        }
+
+        Write-Host ""
+        Write-Host "==========================================" -ForegroundColor Green
+        Write-Host "★ STEP 10 成功" -ForegroundColor Green
+        Write-Host "最近檢查 = $($TFD.RecentCheck)" -ForegroundColor Green
+        Write-Host "最近申報 = $($TFD.RecentReport)" -ForegroundColor Green
+        Write-Host "使用原 V4：TcxCustomInnerTextEdit + 貼上 + Ctrl+C 驗證。" -ForegroundColor Green
+        Write-Host "本步尚未按『確認』。" -ForegroundColor Green
+        Write-Host "==========================================" -ForegroundColor Green
+    }
+    catch {
+
+        Write-Host ""
+        Write-Host "========== STEP 10 中止 ==========" -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
+
+        Write-Host ""
+        Write-Host $_.InvocationInfo.PositionMessage -ForegroundColor Yellow
+
+        throw   # 一鍵版：讓整個流程停下來
+    }
+}
+
+# ============================================================
+# STEP 11：開啟場所紀錄表預覽
+# ============================================================
+$Steps['11'] = {
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+    Add-Type -AssemblyName System.Windows.Forms
+
+    if (-not ("TFDStep11Preview" -as [type])) {
+
+        Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+
+public static class TFDStep11Preview
+{
+    public delegate bool EnumWindowsProc(
+        IntPtr hWnd,
+        IntPtr lParam
+    );
+
+    public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP   = 0x0004;
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(
+        EnumWindowsProc lpEnumFunc,
+        IntPtr lParam
+    );
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(
+        IntPtr hWnd,
+        out uint lpdwProcessId
+    );
+
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+    public static extern int GetClassName(
+        IntPtr hWnd,
+        StringBuilder lpClassName,
+        int nMaxCount
+    );
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(
+        IntPtr hWnd
+    );
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(
+        IntPtr hWnd
+    );
+
+    [DllImport("user32.dll")]
+    public static extern bool SetCursorPos(
+        int X,
+        int Y
+    );
+
+    [DllImport("user32.dll")]
+    public static extern void mouse_event(
+        uint dwFlags,
+        uint dx,
+        uint dy,
+        uint dwData,
+        UIntPtr dwExtraInfo
+    );
+
+    public static string ClassName(
+        IntPtr hWnd
+    )
+    {
+        if (hWnd == IntPtr.Zero)
+            return "";
+
+        StringBuilder sb =
+            new StringBuilder(256);
+
+        GetClassName(
+            hWnd,
+            sb,
+            sb.Capacity
+        );
+
+        return sb.ToString();
+    }
+
+    public static int PID(
+        IntPtr hWnd
+    )
+    {
+        uint pid;
+
+        GetWindowThreadProcessId(
+            hWnd,
+            out pid
+        );
+
+        return (int)pid;
+    }
+
+    public static IntPtr FindByClassPid(
+        string className,
+        int targetPid
+    )
+    {
+        IntPtr result =
+            IntPtr.Zero;
+
+        EnumWindows(
+            delegate(IntPtr hWnd, IntPtr lParam)
+            {
+                if (
+                    PID(hWnd) == targetPid &&
+                    ClassName(hWnd) == className
+                )
+                {
+                    result = hWnd;
+                    return false;
+                }
+
+                return true;
+            },
+            IntPtr.Zero
+        );
+
+        return result;
+    }
+
+    public static IntPtr FindVisibleByClassPid(
+        string className,
+        int targetPid
+    )
+    {
+        IntPtr result =
+            IntPtr.Zero;
+
+        EnumWindows(
+            delegate(IntPtr hWnd, IntPtr lParam)
+            {
+                if (
+                    IsWindowVisible(hWnd) &&
+                    PID(hWnd) == targetPid &&
+                    ClassName(hWnd) == className
+                )
+                {
+                    result = hWnd;
+                    return false;
+                }
+
+                return true;
+            },
+            IntPtr.Zero
+        );
+
+        return result;
+    }
+
+    public static void ClickPoint(
+        int x,
+        int y
+    )
+    {
+        SetCursorPos(
+            x,
+            y
+        );
+
+        System.Threading.Thread.Sleep(80);
+
+        mouse_event(
+            MOUSEEVENTF_LEFTDOWN,
+            0,
+            0,
+            0,
+            UIntPtr.Zero
+        );
+
+        System.Threading.Thread.Sleep(40);
+
+        mouse_event(
+            MOUSEEVENTF_LEFTUP,
+            0,
+            0,
+            0,
+            UIntPtr.Zero
+        );
+    }
+}
+"@
+    }
+
+    $ErrorActionPreference =
+        "Stop"
+
+    function Normalize-Text {
+        param(
+            [string]$Text
+        )
+
+        if (
+            $null -eq
+            $Text
+        ) {
+            return ""
+        }
+
+        return (
+            $Text -replace "\s+", ""
+        )
+    }
+
+    function Wait-Class {
+        param(
+            [int]$ProcessId,
+
+            [string]$ClassName,
+
+            [int]$TimeoutSec = 10,
+
+            [switch]$VisibleOnly
+        )
+
+        $sw =
+            [Diagnostics.Stopwatch]::StartNew()
+
+        while (
+            $sw.Elapsed.TotalSeconds -lt
+            $TimeoutSec
+        ) {
+
+            if ($VisibleOnly) {
+
+                $h =
+                    [TFDStep11Preview]::FindVisibleByClassPid(
+                        $ClassName,
+                        $ProcessId
+                    )
+            }
+            else {
+
+                $h =
+                    [TFDStep11Preview]::FindByClassPid(
+                        $ClassName,
+                        $ProcessId
+                    )
+            }
+
+            if (
+                $h -ne
+                [IntPtr]::Zero
+            ) {
+                return $h
+            }
+
+            Start-Sleep -Milliseconds 100
+        }
+
+        throw "逾時找不到 Class='$ClassName'"
+    }
+
+    function Find-NormalizedElement {
+        param(
+            [System.Windows.Automation.AutomationElement]$Root,
+
+            [string]$Name,
+
+            [string]$ClassName = ""
+        )
+
+        if (
+            $null -eq
+            $Root
+        ) {
+            return $null
+        }
+
+        $all =
+            $Root.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition
+            )
+
+        $wantedName =
+            Normalize-Text $Name
+
+        foreach (
+            $e in
+            $all
+        ) {
+
+            $currentName =
+                Normalize-Text $e.Current.Name
+
+            if (
+                $currentName -ne
+                $wantedName
+            ) {
+                continue
+            }
+
+            if (
+                $ClassName -and
+                $e.Current.ClassName -ne
+                $ClassName
+            ) {
+                continue
+            }
+
+            return $e
+        }
+
+        return $null
+    }
+
+    function Invoke-IdentifiedElement {
+        param(
+            [System.Windows.Automation.AutomationElement]$Element
+        )
+
+        if (
+            $null -eq
+            $Element
+        ) {
+            throw "Invoke-IdentifiedElement 收到 null"
+        }
+
+        $invokePattern =
+            $null
+
+        if (
+            $Element.TryGetCurrentPattern(
+                [System.Windows.Automation.InvokePattern]::Pattern,
+                [ref]$invokePattern
