@@ -1,0 +1,60 @@
+name: build-inprocess-powershell-host
+
+on:
+  push:
+    branches: [feature/inprocess-powershell-host]
+    paths:
+      - 'host/AnKuanHost/**'
+      - '.github/workflows/build-inprocess-host.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore host/AnKuanHost/AnKuanHost.csproj
+
+      - name: Build
+        run: dotnet build host/AnKuanHost/AnKuanHost.csproj -c Release --no-restore
+
+      - name: Publish self-contained single-file x64
+        run: dotnet publish host/AnKuanHost/AnKuanHost.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o dist-host
+
+      - name: Verify host and embedded STEP 1-21 payload
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'dist-host\安管自動化.exe'
+          if (!(Test-Path $exe)) { throw "EXE not found: $exe" }
+
+          $size = (Get-Item $exe).Length
+          Write-Host "EXE size = $size bytes"
+          if ($size -lt 10MB) { throw "EXE too small; full self-contained host was not produced: $size" }
+
+          & $exe --selftest
+          if ($LASTEXITCODE -ne 0) { throw "Embedded-script selftest failed: $LASTEXITCODE" }
+
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "SHA256  $hash  安管自動化.exe" | Set-Content -Encoding ascii 'dist-host\SHA256.txt'
+          Write-Host "SHA256 = $hash"
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: 安管自動化-InProcess-STEP1-21
+          path: |
+            dist-host/安管自動化.exe
+            dist-host/SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
