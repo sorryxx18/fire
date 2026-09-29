@@ -3,6 +3,8 @@ using System.Globalization;
 using System.Management.Automation;
 using System.Management.Automation.Host;
 using System.Security;
+using PSRectangle = System.Management.Automation.Host.Rectangle;
+using PSSize = System.Management.Automation.Host.Size;
 
 namespace AnKuanHost;
 
@@ -47,10 +49,7 @@ internal sealed class ConsolePsHostUi : PSHostUserInterface
             }
             if (key.Key == ConsoleKey.Backspace)
             {
-                if (value.Length > 0)
-                {
-                    value.RemoveAt(value.Length - 1);
-                }
+                if (value.Length > 0) value.RemoveAt(value.Length - 1);
                 continue;
             }
             value.AppendChar(key.KeyChar);
@@ -133,8 +132,7 @@ internal sealed class ConsolePsHostUi : PSHostUserInterface
     {
         if (!string.IsNullOrWhiteSpace(caption)) Console.WriteLine(caption);
         if (!string.IsNullOrWhiteSpace(message)) Console.WriteLine(message);
-        for (int i = 0; i < choices.Count; i++)
-            Console.WriteLine($"[{i}] {choices[i].Label}");
+        for (int i = 0; i < choices.Count; i++) Console.WriteLine($"[{i}] {choices[i].Label}");
         Console.Write($"選擇 [{defaultChoice}]: ");
         var input = Console.ReadLine();
         return int.TryParse(input, out var index) && index >= 0 && index < choices.Count ? index : defaultChoice;
@@ -170,7 +168,7 @@ internal sealed class ConsolePsRawUi : PSHostRawUserInterface
         set => Console.BackgroundColor = value;
     }
 
-    public override Size BufferSize
+    public override PSSize BufferSize
     {
         get => new(Console.BufferWidth, Console.BufferHeight);
         set => Console.SetBufferSize(value.Width, value.Height);
@@ -195,8 +193,8 @@ internal sealed class ConsolePsRawUi : PSHostRawUserInterface
     }
 
     public override bool KeyAvailable => Console.KeyAvailable;
-    public override Size MaxPhysicalWindowSize => new(Console.LargestWindowWidth, Console.LargestWindowHeight);
-    public override Size MaxWindowSize => new(Console.LargestWindowWidth, Console.LargestWindowHeight);
+    public override PSSize MaxPhysicalWindowSize => new(Console.LargestWindowWidth, Console.LargestWindowHeight);
+    public override PSSize MaxWindowSize => new(Console.LargestWindowWidth, Console.LargestWindowHeight);
 
     public override Coordinates WindowPosition
     {
@@ -204,7 +202,7 @@ internal sealed class ConsolePsRawUi : PSHostRawUserInterface
         set => Console.SetWindowPosition(value.X, value.Y);
     }
 
-    public override Size WindowSize
+    public override PSSize WindowSize
     {
         get => new(Console.WindowWidth, Console.WindowHeight);
         set => Console.SetWindowSize(value.Width, value.Height);
@@ -221,7 +219,7 @@ internal sealed class ConsolePsRawUi : PSHostRawUserInterface
         while (Console.KeyAvailable) Console.ReadKey(intercept: true);
     }
 
-    public override BufferCell[,] GetBufferContents(Rectangle rectangle)
+    public override BufferCell[,] GetBufferContents(PSRectangle rectangle)
         => throw new NotSupportedException("Console buffer read is not required by this application.");
 
     public override KeyInfo ReadKey(ReadKeyOptions options)
@@ -235,12 +233,12 @@ internal sealed class ConsolePsRawUi : PSHostRawUserInterface
         return new KeyInfo((int)key.Key, key.KeyChar, states, keyDown: true);
     }
 
-    public override void ScrollBufferContents(Rectangle source, Coordinates destination, Rectangle clip, BufferCell fill)
+    public override void ScrollBufferContents(PSRectangle source, Coordinates destination, PSRectangle clip, BufferCell fill)
         => throw new NotSupportedException("Console buffer scrolling is not required by this application.");
 
     public override void SetBufferContents(Coordinates origin, BufferCell[,] contents)
         => throw new NotSupportedException("Console buffer write is not required by this application.");
 
-    public override void SetBufferContents(Rectangle rectangle, BufferCell fill)
+    public override void SetBufferContents(PSRectangle rectangle, BufferCell fill)
         => throw new NotSupportedException("Console buffer write is not required by this application.");
 }
