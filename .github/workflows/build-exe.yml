@@ -37,16 +37,35 @@ jobs:
       - name: Build Word template
         run: python template_builder.py
 
-      - name: Build main EXE
+      - name: Build full Windows EXE
         shell: cmd
         run: >-
           python -m PyInstaller --noconfirm --clean --onefile --windowed
-          --name "消防安全表自動產製工具"
+          --name "安管自動化"
           --add-data "resources\template.docx;resources"
           --collect-all pywinauto
           --collect-all winocr
           --collect-all winrt
           app.py
+
+      - name: Verify full EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Get-Item 'dist/安管自動化.exe'
+          Write-Host "EXE size: $($exe.Length) bytes"
+          if ($exe.Length -lt 5000000) {
+            throw "EXE 過小，疑似不是完整 PyInstaller runtime：$($exe.Length) bytes"
+          }
+          $fs = [System.IO.File]::OpenRead($exe.FullName)
+          try {
+            $b1 = $fs.ReadByte(); $b2 = $fs.ReadByte()
+          }
+          finally { $fs.Dispose() }
+          if ($b1 -ne 0x4D -or $b2 -ne 0x5A) { throw 'EXE Header 不是 MZ' }
+          $hash = Get-FileHash $exe.FullName -Algorithm SHA256
+          "$($hash.Hash) *安管自動化.exe" | Set-Content 'dist/SHA256.txt' -Encoding ASCII
+          Write-Host "SHA256: $($hash.Hash)"
 
       - name: Build AnKuan UI probe EXE
         shell: cmd
@@ -59,8 +78,11 @@ jobs:
       - name: Upload main app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 消防安全表自動產製工具
-          path: dist/消防安全表自動產製工具.exe
+          name: 安管自動化-Windows
+          path: |
+            dist/安管自動化.exe
+            dist/SHA256.txt
+          if-no-files-found: error
 
       - name: Upload UI probe artifact
         uses: actions/upload-artifact@v4
@@ -72,16 +94,14 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.4.0
+          TAG: v0.4.1
         run: |
-          $main = "dist/消防安全表自動產製工具.exe"
-          $releaseMain = "dist/fire_tool.exe"
+          $main = "dist/安管自動化.exe"
+          $sha = "dist/SHA256.txt"
           $probe = "dist/ankuan_ui_probe.exe"
-          Copy-Item $main $releaseMain -Force
           gh release view $env:TAG 2>$null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG $releaseMain --clobber
-            gh release upload $env:TAG $probe --clobber
+            gh release upload $env:TAG $main $sha $probe --clobber
           } else {
-            gh release create $env:TAG $releaseMain $probe --title "消防安全表自動產製工具 v0.4.0" --notes "定案版流程：查詢結果與安全查察紀錄皆由人工選擇；工具依序產生『場所紀錄表』與『消防安全檢查紀錄表』兩份 PDF，場所紀錄表可設定最近檢查／申報次數，兩份 PDF 會做場所識別檢查後再產 Word。新增預覽視窗相對定位、外部 ankuan_base_profile.json 基本校正、100%＋最大化標準環境檢查、3 點快速校正與本機微調；不使用 CSV。首次建立基本校正前仍需在標準機完成必要控制點校正。"
+            gh release create $env:TAG $main $sha $probe --title "安管自動化 v0.4.1" --notes "恢復完整 PyInstaller Windows x64 封裝，不再使用小型 PowerShell wrapper。內含 Python runtime、pywinauto、WinRT/OCR 依賴與固定 Word 範本；維持既有安管自動化、兩份 PDF 解析及 Word 產製流程。"
           }
