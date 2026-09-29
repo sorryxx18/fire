@@ -19,5 +19,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.PowerShell.SDK" Version="7.4.6" />
+    <EmbeddedResource Include="script\part*.b64" />
   </ItemGroup>
 </Project>
